@@ -576,6 +576,7 @@ button:disabled {
 .search-field input,
 .mini-form input,
 .profile-name-field input,
+.confirm-dialog input,
 .card-form input,
 .card-form select,
 .card-form textarea,
@@ -891,6 +892,37 @@ button:disabled {
   border: 1px solid rgba(31, 41, 51, 0.1);
   border-radius: 8px;
   background: #fffdf8;
+}
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(31, 41, 51, 0.42);
+}
+
+.confirm-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 420px);
+  padding: 16px;
+  border: 1px solid rgba(31, 41, 51, 0.14);
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 24px 60px rgba(31, 41, 51, 0.26);
+}
+
+.confirm-dialog p {
+  margin: 0;
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .browser-card.suspended {
@@ -1330,6 +1362,10 @@ button:disabled {
 
   .stats-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .confirm-actions {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

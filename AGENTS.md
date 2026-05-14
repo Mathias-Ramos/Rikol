@@ -39,7 +39,7 @@ Current "Directory Tree" with short description of each folder and files (5-30 w
 ├── src/data/ - Demo deck and simple recto/verso/detail card seed data.
 ├── src/lib/ - Storage migration, scheduler, rewards and badge targets, rich text normalization, sanitizing, rendering, and import/export logic.
 ├── src/test/ - Vitest setup.
-└── tests/e2e/ - Playwright onboarding, profile, navigation, rich text card form, and alternating review tests.
+└── tests/e2e/ - Playwright onboarding, profile, navigation, rich text card form, flip, and review tests.
 ```
 
 # Rules
@@ -83,7 +83,9 @@ Here is information about project history, decisions already made, or constraint
 - Profile level bar uses reward level thresholds, with current level left and next level right.
 - Profile badges use two tabs: Completed and Remaining.
 - Completed badges display original badge target description, not generic won text.
-- Settings menu item contains Local data info and clear local data action.
+- Settings menu item contains Local data, import/export, and clear local data actions.
+- Import/export live in Settings; there is no separate Import menu item.
+- Clear local data opens confirmation dialog and requires typing `delete` before deletion.
 - Create card menu item stays at bottom of side menu, separated from other sections by divider.
 - Mobile review actions stay fixed near bottom for easier thumb access.
 - Review card deck name stays top-center. Due count is hidden from global header.
@@ -93,6 +95,7 @@ Here is information about project history, decisions already made, or constraint
 - Decks menu uses focused screens: deck library, deck card list, then card editor. Back arrows return one level.
 - Deck detail header includes small plus icon that opens new-card form with current deck preselected.
 - Card create/edit form does not show card tags. Existing/imported tags remain stored for import/export compatibility.
+- Card edit form includes button to flip Recto and Verso while preserving rich text.
 - Form dropdowns use custom in-app menu controls so options match current UI and open below fields.
 - Cards use simple Recto, Verso, and optional Details fields. Details render smaller below Verso during review.
 - Card create/edit fields support toggleable inline Bold, Italic, and Code formatting. Rich text stores sanitized HTML fragments in existing card strings.

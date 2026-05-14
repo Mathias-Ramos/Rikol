@@ -67,7 +67,23 @@ test("profile name and badge tabs", async ({ page }) => {
   await page.getByRole("button", { name: /Settings/i }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Local data" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Import" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Export" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Export JSON backup" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear local data" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear local data" }).click();
+  await expect(page.getByRole("dialog", { name: "Clear local data?" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog", { name: "Clear local data?" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear local data" }).click();
+  await page.getByLabel("Type delete to confirm").fill("Delete");
+  await expect(page.getByRole("button", { name: "Delete data" })).toBeDisabled();
+  await page.getByLabel("Type delete to confirm").fill("delete");
+  await page.getByRole("button", { name: "Delete data" }).click();
+  await expect(page.getByRole("button", { name: /Load demo decks/i })).toBeVisible();
 });
 
 test("simple cards alternate reveal and typed answer modes", async ({ page }) => {
@@ -138,13 +154,16 @@ test("rich text card formatting persists through create and edit", async ({ page
   await expect(page.locator(".rich-text-editor[aria-label='Recto'] strong")).toHaveText("Rich");
   await expect(page.locator(".rich-text-editor[aria-label='Verso'] em")).toHaveText("answer");
   await expect(page.locator(".rich-text-editor[aria-label='Details'] code")).toHaveText("const value = 1;");
+  await page.getByRole("button", { name: "Flip Recto and Verso" }).click();
+  await expect(page.locator(".rich-text-editor[aria-label='Recto'] em")).toHaveText("answer");
+  await expect(page.locator(".rich-text-editor[aria-label='Verso'] strong")).toHaveText("Rich");
   await page.getByRole("button", { name: "Save card" }).click();
 
   await openNavIfMobile(page);
   await page.getByRole("button", { name: /Home/i }).click();
-  await expect(page.locator(".review-face strong")).toHaveText("Rich");
-  await page.getByRole("button", { name: /Reveal/i }).click();
   await expect(page.locator(".review-face em")).toHaveText("answer");
+  await page.getByRole("button", { name: /Reveal/i }).click();
+  await expect(page.locator(".review-face strong")).toHaveText("Rich");
   await expect(page.locator(".review-face code")).toHaveText("const value = 1;");
 });
 

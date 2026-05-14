@@ -50,7 +50,7 @@ import {
 import { clearAppData, createEmptyAppData, loadAppData, saveAppData } from "./lib/storage";
 import { nowIso, stripHtml, uid } from "./lib/utils";
 
-type View = "review" | "decks" | "create" | "import" | "profile" | "settings";
+type View = "review" | "decks" | "create" | "profile" | "settings";
 type NavItem = { view: View; label: string; icon: typeof Home };
 
 interface LastReviewAction {
@@ -69,7 +69,6 @@ interface XpBurstState {
 const navItems: NavItem[] = [
   { view: "review", label: "Home", icon: Home },
   { view: "decks", label: "Decks", icon: Library },
-  { view: "import", label: "Import", icon: FileUp },
   { view: "profile", label: "Profile", icon: UserRound },
   { view: "settings", label: "Settings", icon: SettingsIcon }
 ];
@@ -324,7 +323,7 @@ export default function App() {
       <Onboarding
         onDemo={loadDemoDecks}
         onCreate={() => completeOnboarding("create")}
-        onImport={() => completeOnboarding("import")}
+        onImport={() => completeOnboarding("settings")}
       />
     );
   }
@@ -403,7 +402,6 @@ export default function App() {
             saveCard={saveCard}
           />
         )}
-        {view === "import" && <ImportView data={data} setData={setData} mergeBundle={mergeBundle} />}
         {view === "profile" && (
           <ProfileView
             data={data}
@@ -412,7 +410,14 @@ export default function App() {
             updateProfileName={updateProfileName}
           />
         )}
-        {view === "settings" && <SettingsView resetLocalData={resetLocalData} />}
+        {view === "settings" && (
+          <SettingsView
+            data={data}
+            setData={setData}
+            mergeBundle={mergeBundle}
+            resetLocalData={resetLocalData}
+          />
+        )}
       </main>
 
     </div>
@@ -966,19 +971,32 @@ function CreateView({
   );
 }
 
-function ImportView({
+function SettingsView({
   data,
   setData,
-  mergeBundle
+  mergeBundle,
+  resetLocalData
 }: {
   data: AppData;
   setData: (data: AppData) => void;
   mergeBundle: (bundle: ImportBundle) => void;
+  resetLocalData: () => Promise<void>;
 }) {
   const [pending, setPending] = useState<ImportBundle | null>(null);
   const [status, setStatus] = useState("");
   const [exportDeckId, setExportDeckId] = useState(data.decks[0]?.id ?? "");
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearConfirmText, setClearConfirmText] = useState("");
+  const [clearingLocalData, setClearingLocalData] = useState(false);
+  const clearConfirmInputRef = useRef<HTMLInputElement>(null);
   const exportDeck = data.decks.find((deck) => deck.id === exportDeckId) ?? data.decks[0];
+  const canClearLocalData = clearConfirmText.trim() === "delete";
+
+  useEffect(() => {
+    if (clearConfirmOpen) {
+      clearConfirmInputRef.current?.focus();
+    }
+  }, [clearConfirmOpen]);
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1017,8 +1035,48 @@ function ImportView({
     setStatus("APKG exported.");
   }
 
+  function closeClearConfirm() {
+    if (clearingLocalData) {
+      return;
+    }
+    setClearConfirmOpen(false);
+    setClearConfirmText("");
+  }
+
+  async function confirmClearLocalData() {
+    if (!canClearLocalData || clearingLocalData) {
+      return;
+    }
+
+    // Typed confirmation prevents accidental browser data loss.
+    setClearingLocalData(true);
+    try {
+      await resetLocalData();
+      setClearConfirmOpen(false);
+      setClearConfirmText("");
+    } catch {
+      setStatus("Clear failed.");
+    } finally {
+      setClearingLocalData(false);
+    }
+  }
+
   return (
     <section className="content-grid">
+      <div className="panel">
+        <div className="panel-heading">
+          <h2>Settings</h2>
+          <SettingsIcon size={18} />
+        </div>
+        <div className="settings-box">
+          <h3>Local data</h3>
+          <p className="muted">Data lives in this browser. Import, export, or clear it here.</p>
+          <button className="danger-action" onClick={() => setClearConfirmOpen(true)}>
+            Clear local data
+          </button>
+        </div>
+      </div>
+
       <div className="panel">
         <div className="panel-heading">
           <h2>Import</h2>
@@ -1107,6 +1165,50 @@ function ImportView({
           </>
         )}
       </div>
+
+      {clearConfirmOpen && (
+        <div className="modal-scrim" role="presentation" onMouseDown={closeClearConfirm}>
+          <section
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clear-local-data-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="panel-heading">
+              <h2 id="clear-local-data-title">Clear local data?</h2>
+              <Trash2 size={18} />
+            </div>
+            <p className="muted">
+              This removes decks, cards, reviews, profile, badges, and import history from this browser.
+            </p>
+            <label className="field-label">
+              Type delete to confirm
+              <input
+                ref={clearConfirmInputRef}
+                value={clearConfirmText}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                onChange={(event) => setClearConfirmText(event.target.value)}
+              />
+            </label>
+            <div className="confirm-actions">
+              <button type="button" className="secondary-action" onClick={closeClearConfirm}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="danger-action"
+                disabled={!canClearLocalData || clearingLocalData}
+                onClick={confirmClearLocalData}
+              >
+                {clearingLocalData ? "Deleting..." : "Delete data"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
@@ -1243,26 +1345,6 @@ function ProfileView({
   );
 }
 
-function SettingsView({ resetLocalData }: { resetLocalData: () => void }) {
-  return (
-    <section className="content-grid">
-      <div className="panel">
-        <div className="panel-heading">
-          <h2>Settings</h2>
-          <SettingsIcon size={18} />
-        </div>
-        <div className="settings-box">
-          <h3>Local data</h3>
-          <p className="muted">Data lives in this browser. Export JSON for backup.</p>
-          <button className="danger-action" onClick={resetLocalData}>
-            Clear local data
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function DeckForm({ onAdd }: { onAdd: (deck: Omit<Deck, "id" | "createdAt" | "updatedAt">) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -1348,6 +1430,12 @@ function CardForm({
     }
   }
 
+  function flipRectoVerso() {
+    // Keep rich text fragments intact while switching card sides.
+    setRecto(verso);
+    setVerso(recto);
+  }
+
   return (
     <form className="card-form" onSubmit={submit}>
       <label className="field-label">
@@ -1361,6 +1449,12 @@ function CardForm({
       </label>
       <RichTextField label="Recto" value={recto} required placeholder="Question or prompt" onChange={setRecto} />
       <RichTextField label="Verso" value={verso} required placeholder="Answer" onChange={setVerso} />
+      {existingCard && (
+        <button className="secondary-action wide" type="button" onClick={flipRectoVerso}>
+          <FlipHorizontal2 size={18} aria-hidden="true" />
+          Flip Recto and Verso
+        </button>
+      )}
       <RichTextField label="Details" value={details} placeholder="Optional context" onChange={setDetails} />
       <button className="primary-action wide" type="submit">
         Save card
