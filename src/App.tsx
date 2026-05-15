@@ -278,6 +278,28 @@ export default function App() {
     }));
   }
 
+  function deleteDeck(deckId: string) {
+    const deletedCardIds = new Set(data.cards.filter((card) => card.deckId === deckId).map((card) => card.id));
+
+    updateData((current) => {
+      const cardIds = new Set(current.cards.filter((card) => card.deckId === deckId).map((card) => card.id));
+
+      // Deck deletion removes cards and their review history together.
+      return {
+        ...current,
+        decks: current.decks.filter((deck) => deck.id !== deckId),
+        cards: current.cards.filter((card) => card.deckId !== deckId),
+        reviewStates: current.reviewStates.filter((state) => !cardIds.has(state.cardId)),
+        reviewLogs: current.reviewLogs.filter((log) => log.deckId !== deckId && !cardIds.has(log.cardId))
+      };
+    });
+
+    if (lastAction && deletedCardIds.has(lastAction.cardId)) {
+      setLastAction(null);
+      setXpBurst(null);
+    }
+  }
+
   function mergeBundle(bundle: ImportBundle) {
     updateData((current) => {
       const merged = mergeImport(current, bundle);
@@ -392,6 +414,7 @@ export default function App() {
             data={data}
             addDeck={addDeck}
             deleteCard={deleteCard}
+            deleteDeck={deleteDeck}
             saveCard={saveCard}
           />
         )}
@@ -686,11 +709,13 @@ function DecksView({
   data,
   addDeck,
   deleteCard,
+  deleteDeck,
   saveCard
 }: {
   data: AppData;
   addDeck: (deck: Omit<Deck, "id" | "createdAt" | "updatedAt">) => void;
   deleteCard: (id: string) => void;
+  deleteDeck: (id: string) => void;
   saveCard: (card: Omit<Card, "id" | "createdAt" | "updatedAt">, existingId?: string) => void;
 }) {
   const [deckMode, setDeckMode] = useState<"library" | "deckCards" | "cardEditor" | "newCard">("library");
@@ -698,11 +723,15 @@ function DecksView({
   const [selectedDeckId, setSelectedDeckId] = useState("");
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [creatingDeck, setCreatingDeck] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const deleteConfirmInputRef = useRef<HTMLInputElement>(null);
   const selectedDeck = data.decks.find((deck) => deck.id === selectedDeckId);
   const activeEditingCard = data.cards.find((card) => card.id === editingCard?.id) ?? editingCard;
   const normalized = query.trim().toLowerCase();
   const decks = data.decks.filter((deck) => `${deck.name} ${deck.tags.join(" ")}`.toLowerCase().includes(normalized));
   const cards = data.cards.filter((card) => card.deckId === selectedDeck?.id);
+  const canDeleteDeck = deleteConfirmText.trim() === "delete";
 
   useEffect(() => {
     if (deckMode === "library") {
@@ -725,6 +754,29 @@ function DecksView({
     }
   }, [data.cards, deckMode, editingCard]);
 
+  useEffect(() => {
+    if (deleteConfirmOpen) {
+      deleteConfirmInputRef.current?.focus();
+    }
+  }, [deleteConfirmOpen]);
+
+  function closeDeleteConfirm() {
+    setDeleteConfirmOpen(false);
+    setDeleteConfirmText("");
+  }
+
+  function confirmDeleteDeck() {
+    if (!selectedDeck || !canDeleteDeck) {
+      return;
+    }
+
+    deleteDeck(selectedDeck.id);
+    closeDeleteConfirm();
+    setSelectedDeckId("");
+    setEditingCard(null);
+    setDeckMode("library");
+  }
+
   if (deckMode === "deckCards" && selectedDeck) {
     return (
       <section className="deck-screen">
@@ -744,17 +796,27 @@ function DecksView({
               <h2>{selectedDeck.name}</h2>
               <p className="muted">{cards.length} cards</p>
             </div>
-            <button
-              className="icon-button"
-              onClick={() => {
-                setEditingCard(null);
-                setDeckMode("newCard");
-              }}
-              aria-label="Add card"
-              title="Add card"
-            >
-              <Plus size={18} />
-            </button>
+            <div className="screen-actions">
+              <button
+                className="icon-button danger"
+                onClick={() => setDeleteConfirmOpen(true)}
+                aria-label="Delete deck"
+                title="Delete deck"
+              >
+                <Trash2 size={18} />
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => {
+                  setEditingCard(null);
+                  setDeckMode("newCard");
+                }}
+                aria-label="Add card"
+                title="Add card"
+              >
+                <Plus size={18} />
+              </button>
+            </div>
           </div>
           {selectedDeck.description && <p className="muted deck-description">{selectedDeck.description}</p>}
           <div className="deck-card-list">
@@ -784,6 +846,44 @@ function DecksView({
             )}
           </div>
         </div>
+        {deleteConfirmOpen && (
+          <div className="modal-scrim" role="presentation" onMouseDown={closeDeleteConfirm}>
+            <section
+              className="confirm-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-deck-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="panel-heading">
+                <h2 id="delete-deck-title">Delete {selectedDeck.name}?</h2>
+                <Trash2 size={18} />
+              </div>
+              <p className="muted">
+                This removes {cards.length} {cards.length === 1 ? "card" : "cards"} and their review history.
+              </p>
+              <label className="field-label">
+                Type delete to confirm
+                <input
+                  ref={deleteConfirmInputRef}
+                  value={deleteConfirmText}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  onChange={(event) => setDeleteConfirmText(event.target.value)}
+                />
+              </label>
+              <div className="confirm-actions">
+                <button type="button" className="secondary-action" onClick={closeDeleteConfirm}>
+                  Cancel
+                </button>
+                <button type="button" className="danger-action" disabled={!canDeleteDeck} onClick={confirmDeleteDeck}>
+                  Delete deck
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </section>
     );
   }

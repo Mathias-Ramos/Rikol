@@ -32,14 +32,14 @@ Current "Directory Tree" with short description of each folder and files (5-30 w
 ├── package.json - Scripts and dependencies for app, tests, build, and e2e.
 ├── playwright.config.ts - Desktop and mobile Chromium e2e test setup.
 ├── public/ - PWA manifest, service worker, and app icon assets.
-├── src/App.tsx - Main Rikol shell, profile/settings screens, deck browser, rich text forms, review flow, XP feedback, and actions.
+├── src/App.tsx - Main Rikol shell, profile/settings screens, deck browser/deletion, rich text forms, review flow, XP feedback, and actions.
 ├── src/index.css - Tailwind entry plus responsive app, profile, rich text editor, deck browsing, XP animation, and character CSS.
 ├── src/main.tsx - React root and production service worker registration.
 ├── src/types.ts - Core Deck, Card, Media, Review, Import, answer mode, and settings types.
 ├── src/data/ - Demo deck and simple recto/verso/detail card seed data.
 ├── src/lib/ - Storage migration, scheduler, rewards and badge targets, rich text normalization, sanitizing, rendering, and import/export logic.
 ├── src/test/ - Vitest setup.
-└── tests/e2e/ - Playwright onboarding, profile, navigation, rich text card form, flip, and review tests.
+└── tests/e2e/ - Playwright onboarding, profile, navigation, deck deletion, rich text card form, flip, and review tests.
 ```
 
 # Rules
@@ -94,6 +94,7 @@ Here is information about project history, decisions already made, or constraint
 - Create card view labels first-deck helper as Create deck, not Deck setup.
 - Decks menu uses focused screens: deck library, deck card list, then card editor. Back arrows return one level.
 - Deck detail header includes small plus icon that opens new-card form with current deck preselected.
+- Deck detail header includes small trash icon. Deleting deck requires typing `delete` and removes deck cards plus review history.
 - Card create/edit form does not show card tags. Existing/imported tags remain stored for import/export compatibility.
 - Card edit form includes button to flip Recto and Verso while preserving rich text.
 - Form dropdowns use custom in-app menu controls so options match current UI and open below fields.

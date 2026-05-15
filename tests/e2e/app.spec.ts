@@ -43,6 +43,41 @@ test("onboarding and mobile navigation", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Daily words 0 cards" })).toBeVisible();
 });
 
+test("deck deletion requires typed confirmation and removes deck cards", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Load demo decks/i }).click();
+  await openNavIfMobile(page);
+  await page.getByRole("button", { name: /Decks/i }).click();
+  await page.getByRole("button", { name: "Code sparks 2 cards" }).click();
+
+  await expect(page.getByRole("button", { name: "Delete deck" })).toBeVisible();
+  await page.getByRole("button", { name: "Delete deck" }).click();
+  const dialog = page.getByRole("dialog", { name: "Delete Code sparks?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("2 cards");
+  await expect(dialog.getByRole("button", { name: "Delete deck" })).toBeDisabled();
+  await dialog.getByLabel("Type delete to confirm").fill("Delete");
+  await expect(dialog.getByRole("button", { name: "Delete deck" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Code sparks" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Delete deck" }).click();
+  const confirmDialog = page.getByRole("dialog", { name: "Delete Code sparks?" });
+  await confirmDialog.getByLabel("Type delete to confirm").fill("delete");
+  await expect(confirmDialog.getByRole("button", { name: "Delete deck" })).toBeEnabled();
+  await confirmDialog.getByRole("button", { name: "Delete deck" }).click();
+
+  await expect(page.getByRole("heading", { name: "Deck library" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Code sparks 2 cards" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "World capitals 2 cards" })).toBeVisible();
+
+  await openNavIfMobile(page);
+  await page.getByRole("button", { name: /Home/i }).click();
+  await expect(page.locator(".review-face")).toContainText("Canada");
+  await expect(page.getByText("What does this TypeScript utility do?")).toHaveCount(0);
+});
+
 test("profile name and badge tabs", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Load demo decks/i }).click();
