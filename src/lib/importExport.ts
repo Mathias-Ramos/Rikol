@@ -3,11 +3,20 @@ import initSqlJs, { type Database as SqlDatabase } from "sql.js";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { ZSTDDecoder } from "zstddec";
 import type { AppData, Card, Deck, ImportBundle, ImportReport, MediaAsset } from "../types";
+import {
+  cardMediaIds,
+  dataUrlBytes,
+  imageMimeFromName,
+  isSupportedImageAsset,
+  isSupportedImageName,
+  mediaSrc,
+  uniqueAnkiMediaName
+} from "./media";
 import { createInitialReviewState } from "./scheduler";
 import { getPlainCard } from "./renderCard";
 import { sanitizeHtml } from "./sanitize";
 import { migrateAppData } from "./storage";
-import { bytesToBase64, dataUrlToBytes, nowIso, stripHtml, textChecksum, uid } from "./utils";
+import { bytesToBase64, nowIso, stripHtml, textChecksum, uid } from "./utils";
 
 const BACKUP_VERSION = 1;
 const SQLITE_HEADER = "SQLite format 3\0";
@@ -16,7 +25,6 @@ const REQUIRED_ANKI_COLUMNS = {
   col: ["decks", "models"],
   notes: ["id", "guid", "mid", "tags", "flds"]
 };
-const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const AUDIO_VIDEO_RE = /\.(mp3|wav|ogg|m4a|mp4|webm|mov)$/i;
 const DETAIL_FIELD_RE = /^(details?|extra|notes?)$/i;
 
@@ -183,7 +191,7 @@ export async function importApkg(file: File, existingCards: Card[]): Promise<Imp
     const tags = splitTags(String(row[6] ?? ""));
     const fields = String(row[7] ?? "")
       .split("\x1f")
-      .map((value) => replaceMediaRefs(sanitizeHtml(value), media));
+      .map((value) => replaceAnkiMediaRefs(sanitizeHtml(value), media, warnings));
 
     if (!deckByAnkiId.has(deckId)) {
       const name = ankiDecks.get(deckId) ?? "Imported Anki deck";
@@ -323,25 +331,33 @@ export async function exportDeckApkg(deck: Deck, cards: Card[], data: AppData) {
     [1, now, now, now, 11, 0, -1, 0, "{}", JSON.stringify(model), JSON.stringify(decks), JSON.stringify(dconf), "{}"]
   );
 
+  const deckCards = cards.filter((card) => card.deckId === deck.id);
+  const referencedMediaIds = new Set(deckCards.flatMap((card) => cardMediaIds(card)));
   const mediaMap: Record<string, string> = {};
+  const mediaFileNamesById = new Map<string, string>();
+  const usedMediaNames = new Set<string>();
   let mediaIndex = 0;
   for (const asset of data.media) {
-    if (!IMAGE_RE.test(asset.name)) {
+    if (!referencedMediaIds.has(asset.id) || !isSupportedImageAsset(asset)) {
       continue;
     }
-    const parsed = dataUrlToBytes(asset.dataUrl);
+    const parsed = dataUrlBytes(asset);
+    const originalName = uniqueAnkiMediaName(asset, usedMediaNames);
     const fileName = String(mediaIndex);
-    mediaMap[fileName] = asset.name;
+    mediaMap[fileName] = originalName;
+    mediaFileNamesById.set(asset.id, originalName);
     zip.file(fileName, parsed.bytes);
     mediaIndex += 1;
   }
 
-  const deckCards = cards.filter((card) => card.deckId === deck.id);
   deckCards.forEach((card, index) => {
     const plain = getPlainCard(card);
+    const front = replaceRikolMediaRefsForAnki(plain.recto, mediaFileNamesById);
+    const back = replaceRikolMediaRefsForAnki(plain.verso, mediaFileNamesById);
+    const details = replaceRikolMediaRefsForAnki(plain.details, mediaFileNamesById);
     const noteId = Date.now() * 1000 + index;
     const cardAnkiId = noteId + 500;
-    const fields = `${plain.recto}\x1f${plain.verso}\x1f${plain.details}`;
+    const fields = `${front}\x1f${back}\x1f${details}`;
     db.run("insert into notes values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
       noteId,
       card.source?.externalId ?? uid("guid"),
@@ -350,8 +366,8 @@ export async function exportDeckApkg(deck: Deck, cards: Card[], data: AppData) {
       -1,
       ` ${card.tags.join(" ")} `,
       fields,
-      plain.recto,
-      textChecksum(plain.recto),
+      front,
+      textChecksum(front),
       0,
       ""
     ]);
@@ -501,13 +517,13 @@ async function readAnkiMedia(zip: JSZip, warnings: ImportReport["warnings"]) {
       continue;
     }
 
-    if (!IMAGE_RE.test(originalName)) {
+    if (!isSupportedImageName(originalName)) {
       warnings.push({ level: "warning", message: `Skipped unsupported media: ${originalName}.` });
       continue;
     }
 
     const bytes = await entry.async("uint8array");
-    const mime = mimeFromName(originalName);
+    const mime = imageMimeFromName(originalName);
     assets.push({
       id: uid("media"),
       name: originalName,
@@ -1004,11 +1020,63 @@ function pushWarningOnce(warnings: ImportReport["warnings"], message: string) {
   }
 }
 
-function replaceMediaRefs(html: string, media: MediaAsset[]) {
-  return html.replace(/src=["']([^"']+)["']/g, (_match, src) => {
-    const asset = media.find((item) => item.name === src);
-    return `src="${asset?.dataUrl ?? src}"`;
-  });
+function replaceAnkiMediaRefs(html: string, media: MediaAsset[], warnings: ImportReport["warnings"]) {
+  if (!html) {
+    return "";
+  }
+
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const root = doc.body.firstElementChild!;
+  for (const image of Array.from(root.querySelectorAll("img"))) {
+    const src = image.getAttribute("src") ?? "";
+    if (!src || src.startsWith("data:") || src.startsWith("media://")) {
+      continue;
+    }
+
+    const asset = media.find((item) => item.name === src || item.name === safeDecodeURIComponent(src));
+    if (!asset) {
+      pushWarningOnce(warnings, `Missing Anki image media: ${src}.`);
+      continue;
+    }
+
+    image.setAttribute("src", mediaSrc(asset.id));
+    if (!image.getAttribute("alt")) {
+      image.setAttribute("alt", asset.name);
+    }
+  }
+  return root.innerHTML;
+}
+
+function replaceRikolMediaRefsForAnki(html: string, mediaFileNamesById: Map<string, string>) {
+  if (!html) {
+    return "";
+  }
+
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const root = doc.body.firstElementChild!;
+  for (const image of Array.from(root.querySelectorAll("img"))) {
+    const src = image.getAttribute("src") ?? "";
+    if (!src.startsWith("media://")) {
+      continue;
+    }
+
+    const mediaId = src.replace(/^media:\/\//, "");
+    const fileName = mediaFileNamesById.get(mediaId);
+    if (fileName) {
+      image.setAttribute("src", fileName);
+    } else {
+      image.remove();
+    }
+  }
+  return root.innerHTML;
+}
+
+function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function splitTags(value: string) {
@@ -1016,12 +1084,4 @@ function splitTags(value: string) {
     .split(/\s+/)
     .map((tag) => tag.trim())
     .filter(Boolean);
-}
-
-function mimeFromName(name: string) {
-  if (/\.svg$/i.test(name)) return "image/svg+xml";
-  if (/\.webp$/i.test(name)) return "image/webp";
-  if (/\.gif$/i.test(name)) return "image/gif";
-  if (/\.png$/i.test(name)) return "image/png";
-  return "image/jpeg";
 }

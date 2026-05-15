@@ -4,7 +4,7 @@ Project description in 1-2 paragraphs:
 
 Rikol is a mobile-first, local-first spaced repetition web app. It helps users create decks, review simple recto/verso flashcards with an Anki-like flow, import/export decks, personalize profile name, and track progress through XP, levels, badges, and streaks.
 
-Data stays in browser IndexedDB. App works as PWA shell and supports manual JSON backup, CSV exchange, and best-effort Anki `.apkg` import/export. Cards store Recto, Verso, and optional Details with bold, italic, and inline code rich text; review mode alternates between reveal and typed answer after each completed review, with long Verso answers defaulting to reveal-only unless card forces typed answers.
+Data stays in browser IndexedDB. App works as PWA shell and supports manual JSON backup, CSV exchange, and best-effort Anki `.apkg` import/export. Cards store Recto, Verso, and optional Details with bold, italic, inline code, and image rich text; review mode alternates between reveal and typed answer after each completed review, with long Verso answers defaulting to reveal-only unless card forces typed answers.
 
 # Tech Stack
 
@@ -36,10 +36,10 @@ Current "Directory Tree" with short description of each folder and files (5-30 w
 ├── src/index.css - Tailwind entry plus responsive app, profile, rich text editor, deck browsing, XP animation, and character CSS.
 ├── src/main.tsx - React root and production service worker registration.
 ├── src/types.ts - Core Deck, Card, Media, Review, Import, answer mode, and settings types.
-├── src/data/ - Demo deck and simple recto/verso/detail card seed data.
-├── src/lib/ - Storage migration, scheduler, answer-mode gating, rewards, rich text, sanitizing, rendering, and import/export logic.
+├── src/data/ - Demo decks, including SQL essentials, and simple recto/verso/detail card seed data.
+├── src/lib/ - Storage migration, scheduler, answer-mode gating, media helpers, rewards, rich text, sanitizing, rendering, and import/export logic.
 ├── src/test/ - Vitest setup.
-└── tests/e2e/ - Playwright onboarding, profile, navigation, deck import, deck deletion, rich text card form, flip, and review tests.
+└── tests/e2e/ - Playwright onboarding, profile, navigation, deck import, deck deletion, rich text, image card, flip, and review tests.
 ```
 
 # Rules
@@ -102,6 +102,7 @@ Here is information about project history, decisions already made, or constraint
 - Form dropdowns use custom in-app menu controls so options match current UI and open below fields.
 - Cards use simple Recto, Verso, and optional Details fields. Details render smaller below Verso during review.
 - Card create/edit fields support toggleable inline Bold, Italic, and Code formatting. Rich text stores sanitized HTML fragments in existing card strings.
+- Card create/edit fields support image upload in Recto, Verso, and Details. Images store as local `MediaAsset` records and card HTML references them with `media://id`.
 - Rich text editor and review card base text use lighter weight so Bold has visible contrast.
 - Templates were removed from app state and UI. Storage migrates legacy template cards into simple cards.
 - Review mode is stored per review state as `answerMode: "reveal" | "type"` and toggles after every grade, regardless grade value.
@@ -113,5 +114,7 @@ Here is information about project history, decisions already made, or constraint
 - Review grading buttons show compact next-due timing below each option.
 - CSV export uses `deck,recto,verso,details,tags`; CSV import still accepts legacy `front/back` columns.
 - APKG import accepts raw SQLite or zstd-compressed `collection.anki21`, validates Anki tables, then falls back to `collection.anki2`.
+- APKG import/export maps supported packaged images to local media refs and back to Anki media filenames; audio/video and unsupported media are skipped with warnings.
 - APKG import preserves multiple Anki card templates per note as distinct study directions and maps rendered template prompts/answers into simple cards.
 - APKG import handles Anki Cloze generated card ords from one template, hiding active deletions on Recto and using revealed deletions as Verso.
+- Demo data includes SQL essentials deck for beginner query clauses, joins, grouping, aggregates, and constraints.

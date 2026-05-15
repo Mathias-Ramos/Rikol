@@ -1,4 +1,5 @@
 import type { Card, MediaAsset } from "../types";
+import { replaceMediaSources } from "./media";
 import { sanitizeHtml } from "./sanitize";
 
 const CARD_ACCENT = "#69b7ff";
@@ -12,9 +13,10 @@ export interface RenderedCard {
 }
 
 export function renderCard(card: Card, media: MediaAsset[]): RenderedCard {
-  const recto = replaceMediaTokens(card.recto, media);
-  const verso = replaceMediaTokens(card.verso, media);
-  const details = replaceMediaTokens(card.details, media);
+  const mediaById = new Map(media.map((asset) => [asset.id, asset]));
+  const recto = replaceMediaSources(card.recto, mediaById);
+  const verso = replaceMediaSources(card.verso, mediaById);
+  const details = replaceMediaSources(card.details, mediaById);
 
   return {
     recto: sanitizeHtml(copyBlock(recto)),
@@ -31,12 +33,6 @@ export function getPlainCard(card: Card) {
     verso: card.verso,
     details: card.details
   };
-}
-
-function replaceMediaTokens(value: string, media: MediaAsset[]) {
-  return value.replace(/media:\/\/([A-Za-z0-9_-]+)/g, (_, id) => {
-    return media.find((asset) => asset.id === id)?.dataUrl ?? "";
-  });
 }
 
 function copyBlock(value: string, className = "card-copy") {

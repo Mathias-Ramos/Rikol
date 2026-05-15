@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
 
+const PNG_IMAGE = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+  "base64"
+);
+
 test("onboarding and mobile navigation", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Rikol")).toBeVisible();
@@ -264,6 +269,41 @@ test("rich text card formatting persists through create and edit", async ({ page
   await expect(page.locator(".review-face code")).toHaveText("const value = 1;");
 });
 
+test("image card media persists through edit and review", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Create first deck/i }).click();
+  await page.getByPlaceholder("New deck name").fill("Image deck");
+  await page.getByRole("button", { name: "Add deck" }).click();
+
+  await uploadEditorImage(page, "Recto", "recto.png");
+  await uploadEditorImage(page, "Verso", "verso.png");
+  await uploadEditorImage(page, "Details", "details.png");
+  await expect(page.locator(".rich-text-editor[aria-label='Recto'] img")).toBeVisible();
+  await expect(page.locator(".rich-text-editor[aria-label='Verso'] img")).toBeVisible();
+  await expect(page.locator(".rich-text-editor[aria-label='Details'] img")).toBeVisible();
+  await page.getByRole("button", { name: "Save card" }).click();
+
+  await openNavIfMobile(page);
+  await page.getByRole("button", { name: /Decks/i }).click();
+  await page.getByRole("button", { name: "Image deck 1 cards" }).click();
+  await page.getByRole("button", { name: "Image card" }).click();
+  await expect(page.getByRole("heading", { name: "Edit card" })).toBeVisible();
+  await expect(page.locator(".rich-text-editor[aria-label='Recto'] img")).toBeVisible();
+  await expect(page.locator(".rich-text-editor[aria-label='Verso'] img")).toBeVisible();
+  await expect(page.locator(".rich-text-editor[aria-label='Details'] img")).toBeVisible();
+  await page.getByRole("button", { name: "Save card" }).click();
+
+  await openNavIfMobile(page);
+  await page.getByRole("button", { name: /Home/i }).click();
+  const frontImage = page.locator(".review-face-front img");
+  await expect(frontImage).toBeVisible();
+  await expect(frontImage).toHaveJSProperty("complete", true);
+  const frontBox = await frontImage.boundingBox();
+  expect(frontBox?.width ?? 0).toBeLessThanOrEqual(320);
+  await page.getByRole("button", { name: /Reveal/i }).click();
+  await expect(page.locator(".review-face-back img")).toHaveCount(2);
+});
+
 async function openNavIfMobile(page: Page) {
   if ((page.viewportSize()?.width ?? 0) < 760) {
     await page.getByRole("button", { name: /Open menu/i }).click();
@@ -274,6 +314,18 @@ async function closeNavIfMobile(page: Page) {
   if ((page.viewportSize()?.width ?? 0) < 760) {
     await page.getByRole("complementary", { name: "Main menu" }).getByLabel("Close menu").click();
   }
+}
+
+async function uploadEditorImage(page: Page, label: string, name: string) {
+  await page
+    .locator(".rich-text-label")
+    .filter({ has: page.getByRole("textbox", { name: label }) })
+    .locator("input[type='file']")
+    .setInputFiles({
+      name,
+      mimeType: "image/png",
+      buffer: PNG_IMAGE
+    });
 }
 
 async function makeReviewedCardDueNow(page: Page, recto: string) {

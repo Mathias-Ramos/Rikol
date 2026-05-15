@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import initSqlJs from "sql.js";
-import { importApkg, importCsv, parseCsv } from "./importExport";
+import { exportDeckApkg, importApkg, importCsv, parseCsv } from "./importExport";
+import { createEmptyAppData } from "./storage";
+
+const PNG_BYTES = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0,
+  0, 31, 21, 196, 137, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 15, 4, 0, 9, 251, 3, 253, 167,
+  110, 214, 34, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130
+]);
 
 describe("CSV parser", () => {
   it("handles quoted commas", () => {
@@ -58,6 +65,29 @@ describe("APKG importer", () => {
       tags: ["python", "imported"]
     });
     expect(bundle.report.cardCount).toBe(1);
+  });
+
+  it("imports packaged Anki image refs as local media refs", async () => {
+    const file = await apkgFile("image.apkg", {
+      "collection.anki2": await ankiCollection({
+        deckName: "Image deck",
+        recto: '<img src="diagram.png" alt="Diagram">',
+        verso: "Answer"
+      }),
+      media: JSON.stringify({ "0": "diagram.png" }),
+      "0": PNG_BYTES
+    });
+
+    const bundle = await importApkg(file, []);
+
+    expect(bundle.media).toHaveLength(1);
+    expect(bundle.media[0]).toMatchObject({
+      name: "diagram.png",
+      mime: "image/png"
+    });
+    expect(bundle.media[0].dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(bundle.cards[0].recto).toContain(`src="media://${bundle.media[0].id}"`);
+    expect(bundle.cards[0].recto).toContain('alt="Diagram"');
   });
 
   it("falls back to collection.anki2 when modern collection is invalid", async () => {
@@ -170,6 +200,70 @@ describe("APKG importer", () => {
   });
 });
 
+describe("APKG exporter", () => {
+  it("exports referenced local media as Anki package image files", async () => {
+    const createdAt = "2026-05-13T00:00:00.000Z";
+    const deck = {
+      id: "deck_1",
+      name: "Images",
+      description: "",
+      color: "#69b7ff",
+      tags: [],
+      dailyNewLimit: 20,
+      dailyReviewLimit: 100,
+      createdAt,
+      updatedAt: createdAt
+    };
+    const card = {
+      id: "card_1",
+      deckId: deck.id,
+      recto: '<img src="media://media_1" alt="Diagram">',
+      verso: "Answer",
+      details: "",
+      tags: [],
+      suspended: false,
+      forceTypedAnswer: false,
+      createdAt,
+      updatedAt: createdAt
+    };
+    const data = {
+      ...createEmptyAppData(),
+      decks: [deck],
+      cards: [card],
+      media: [
+        {
+          id: "media_1",
+          name: "diagram.png",
+          mime: "image/png",
+          dataUrl: `data:image/png;base64,${bytesToBase64ForTest(PNG_BYTES)}`,
+          createdAt
+        },
+        {
+          id: "media_unused",
+          name: "unused.png",
+          mime: "image/png",
+          dataUrl: `data:image/png;base64,${bytesToBase64ForTest(PNG_BYTES)}`,
+          createdAt
+        }
+      ]
+    };
+
+    const blob = await exportDeckApkg(deck, [card], data);
+    const zip = await JSZip.loadAsync(blob);
+    const mediaMap = JSON.parse(await zip.file("media")!.async("string")) as Record<string, string>;
+    const collectionBytes = await zip.file("collection.anki2")!.async("uint8array");
+    const SQL = await initSqlJs();
+    const db = new SQL.Database(collectionBytes);
+    const fields = String(db.exec("select flds from notes")[0].values[0][0]);
+    db.close();
+
+    expect(mediaMap).toEqual({ "0": "diagram.png" });
+    expect(zip.file("0")).not.toBeNull();
+    expect(fields).toContain('src="diagram.png"');
+    expect(fields).not.toContain("media://");
+  });
+});
+
 function textFile(name: string, contents: string) {
   return {
     name,
@@ -177,7 +271,15 @@ function textFile(name: string, contents: string) {
   } as File;
 }
 
-async function apkgFile(name: string, entries: Record<string, Uint8Array>) {
+function bytesToBase64ForTest(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+async function apkgFile(name: string, entries: Record<string, Uint8Array | string>) {
   const zip = new JSZip();
   for (const [entryName, bytes] of Object.entries(entries)) {
     zip.file(entryName, bytes);

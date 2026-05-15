@@ -12,6 +12,7 @@ import {
   FlipHorizontal2,
   Flame,
   Home,
+  ImagePlus,
   Italic,
   Library,
   Menu,
@@ -27,7 +28,7 @@ import {
 } from "lucide-react";
 import { ClipboardEvent, ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createDemoData } from "./data/demo";
-import type { AppData, Badge, Card, Deck, Grade, ImportBundle } from "./types";
+import type { AppData, Badge, Card, Deck, Grade, ImportBundle, MediaAsset } from "./types";
 import { getEffectiveAnswerMode } from "./lib/answerMode";
 import {
   exportDeckApkg,
@@ -41,6 +42,7 @@ import {
 import { BADGE_TARGETS, applyReviewReward, getLevelProgress, manualBadge } from "./lib/rewards";
 import { renderCard } from "./lib/renderCard";
 import { normalizeRichTextHtml } from "./lib/richText";
+import { createImageMediaAsset, hasCardHtmlContent, IMAGE_FILE_ACCEPT, mediaHtmlForEditor, restoreMediaSources } from "./lib/media";
 import {
   createInitialReviewState,
   createReviewLog,
@@ -257,12 +259,17 @@ export default function App() {
     }));
   }
 
-  function saveCard(cardInput: Omit<Card, "id" | "createdAt" | "updatedAt">, existingId?: string) {
+  function saveCard(
+    cardInput: Omit<Card, "id" | "createdAt" | "updatedAt">,
+    existingId?: string,
+    mediaAssets: MediaAsset[] = []
+  ) {
     const timestamp = nowIso();
     updateData((current) => {
       if (existingId) {
         return {
           ...current,
+          media: appendMediaAssets(current.media, mediaAssets),
           cards: current.cards.map((card) =>
             card.id === existingId ? { ...card, ...cardInput, updatedAt: timestamp } : card
           )
@@ -277,6 +284,7 @@ export default function App() {
       };
       return {
         ...current,
+        media: appendMediaAssets(current.media, mediaAssets),
         cards: [...current.cards, card],
         reviewStates: [...current.reviewStates, createInitialReviewState(card.id, card.createdAt)],
         settings: {
@@ -742,7 +750,11 @@ function DecksView({
   deleteCard: (id: string) => void;
   deleteDeck: (id: string) => void;
   mergeBundle: (bundle: ImportBundle) => void;
-  saveCard: (card: Omit<Card, "id" | "createdAt" | "updatedAt">, existingId?: string) => void;
+  saveCard: (
+    card: Omit<Card, "id" | "createdAt" | "updatedAt">,
+    existingId?: string,
+    mediaAssets?: MediaAsset[]
+  ) => void;
 }) {
   const [deckMode, setDeckMode] = useState<"library" | "deckCards" | "cardEditor" | "newCard">("library");
   const [query, setQuery] = useState("");
@@ -937,8 +949,8 @@ function DecksView({
           <CardForm
             data={data}
             initialDeckId={selectedDeck.id}
-            onSave={(cardInput) => {
-              saveCard(cardInput);
+            onSave={(cardInput, mediaAssets) => {
+              saveCard(cardInput, undefined, mediaAssets);
               setSelectedDeckId(cardInput.deckId);
               setEditingCard(null);
               setDeckMode("deckCards");
@@ -984,8 +996,8 @@ function DecksView({
           <CardForm
             data={data}
             existingCard={activeEditingCard}
-            onSave={(cardInput) => {
-              saveCard(cardInput, activeEditingCard.id);
+            onSave={(cardInput, mediaAssets) => {
+              saveCard(cardInput, activeEditingCard.id, mediaAssets);
               setSelectedDeckId(cardInput.deckId);
               setEditingCard(null);
               setDeckMode("deckCards");
@@ -1066,7 +1078,11 @@ function CreateView({
 }: {
   data: AppData;
   addDeck: (deck: Omit<Deck, "id" | "createdAt" | "updatedAt">) => void;
-  saveCard: (card: Omit<Card, "id" | "createdAt" | "updatedAt">, existingId?: string) => void;
+  saveCard: (
+    card: Omit<Card, "id" | "createdAt" | "updatedAt">,
+    existingId?: string,
+    mediaAssets?: MediaAsset[]
+  ) => void;
 }) {
   const [saved, setSaved] = useState(false);
 
@@ -1080,8 +1096,8 @@ function CreateView({
         {data.decks.length ? (
           <CardForm
             data={data}
-            onSave={(cardInput) => {
-              saveCard(cardInput);
+            onSave={(cardInput, mediaAssets) => {
+              saveCard(cardInput, undefined, mediaAssets);
               setSaved(true);
               window.setTimeout(() => setSaved(false), 1600);
             }}
@@ -1584,7 +1600,7 @@ function CardForm({
   initialDeckId
 }: {
   data: AppData;
-  onSave: (card: Omit<Card, "id" | "createdAt" | "updatedAt">) => void;
+  onSave: (card: Omit<Card, "id" | "createdAt" | "updatedAt">, mediaAssets: MediaAsset[]) => void;
   existingCard?: Card;
   initialDeckId?: string;
 }) {
@@ -1594,6 +1610,8 @@ function CardForm({
   const [verso, setVerso] = useState(existingCard?.verso ?? "");
   const [details, setDetails] = useState(existingCard?.details ?? "");
   const [forceTypedAnswer, setForceTypedAnswer] = useState(existingCard?.forceTypedAnswer ?? false);
+  const [draftMedia, setDraftMedia] = useState<MediaAsset[]>([]);
+  const editorMedia = useMemo(() => [...data.media, ...draftMedia], [data.media, draftMedia]);
 
   useEffect(() => {
     setDeckId(existingCard?.deckId ?? initialDeckId ?? data.decks[0]?.id ?? "");
@@ -1601,14 +1619,21 @@ function CardForm({
     setVerso(existingCard?.verso ?? "");
     setDetails(existingCard?.details ?? "");
     setForceTypedAnswer(existingCard?.forceTypedAnswer ?? false);
+    setDraftMedia([]);
   }, [data.decks, existingCard, initialDeckId]);
+
+  function addDraftMedia(asset: MediaAsset) {
+    const nextDraftMedia = [...draftMedia, asset];
+    setDraftMedia(nextDraftMedia);
+    return [...data.media, ...nextDraftMedia];
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const cleanRecto = normalizeRichTextHtml(recto);
     const cleanVerso = normalizeRichTextHtml(verso);
     const cleanDetails = normalizeRichTextHtml(details);
-    if (!deckId || !stripHtml(cleanRecto) || !stripHtml(cleanVerso)) return;
+    if (!deckId || !hasCardHtmlContent(cleanRecto) || !hasCardHtmlContent(cleanVerso)) return;
     onSave({
       deckId,
       recto: cleanRecto,
@@ -1618,13 +1643,14 @@ function CardForm({
       suspended: existingCard?.suspended ?? false,
       forceTypedAnswer,
       source: existingCard?.source ?? { type: "manual" }
-    });
+    }, draftMedia);
 
     if (!existingCard) {
       setRecto("");
       setVerso("");
       setDetails("");
       setForceTypedAnswer(false);
+      setDraftMedia([]);
     }
   }
 
@@ -1645,15 +1671,38 @@ function CardForm({
           onChange={setDeckId}
         />
       </label>
-      <RichTextField label="Recto" value={recto} required placeholder="Question or prompt" onChange={setRecto} />
-      <RichTextField label="Verso" value={verso} required placeholder="Answer" onChange={setVerso} />
+      <RichTextField
+        label="Recto"
+        value={recto}
+        media={editorMedia}
+        required
+        placeholder="Question or prompt"
+        onChange={setRecto}
+        onAddMedia={addDraftMedia}
+      />
+      <RichTextField
+        label="Verso"
+        value={verso}
+        media={editorMedia}
+        required
+        placeholder="Answer"
+        onChange={setVerso}
+        onAddMedia={addDraftMedia}
+      />
       {existingCard && (
         <button className="secondary-action wide" type="button" onClick={flipRectoVerso}>
           <FlipHorizontal2 size={18} aria-hidden="true" />
           Flip Recto and Verso
         </button>
       )}
-      <RichTextField label="Details" value={details} placeholder="Optional context" onChange={setDetails} />
+      <RichTextField
+        label="Details"
+        value={details}
+        media={editorMedia}
+        placeholder="Optional context"
+        onChange={setDetails}
+        onAddMedia={addDraftMedia}
+      />
       <label className="checkbox-field">
         <input
           type="checkbox"
@@ -1672,34 +1721,44 @@ function CardForm({
 function RichTextField({
   label,
   value,
+  media,
   onChange,
+  onAddMedia,
   placeholder,
   required = false
 }: {
   label: string;
   value: string;
+  media: MediaAsset[];
   onChange: (value: string) => void;
+  onAddMedia: (asset: MediaAsset) => MediaAsset[];
   placeholder: string;
   required?: boolean;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const savedRangeRef = useRef<Range | null>(null);
+  const [uploadError, setUploadError] = useState("");
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (editor && editor.innerHTML !== value) {
-      editor.innerHTML = value;
+    const editableValue = mediaHtmlForEditor(value, media);
+    if (editor && editor.innerHTML !== editableValue) {
+      editor.innerHTML = editableValue;
     }
-  }, [value]);
+  }, [media, value]);
 
-  function syncFromEditor() {
+  function syncFromEditor(mediaOverride = media) {
     const editor = editorRef.current;
     if (!editor) return;
-    const nextValue = normalizeRichTextHtml(editor.innerHTML);
-    if (editor.innerHTML !== nextValue) {
-      editor.innerHTML = nextValue;
+    const nextValue = restoreMediaSources(normalizeRichTextHtml(editor.innerHTML), mediaOverride);
+    const nextEditableValue = mediaHtmlForEditor(nextValue, mediaOverride);
+    if (editor.innerHTML !== nextEditableValue) {
+      editor.innerHTML = nextEditableValue;
       placeCursorAtEnd(editor);
     }
     onChange(nextValue);
+    saveSelection();
   }
 
   function applyFormat(format: RichTextFormat) {
@@ -1714,6 +1773,33 @@ function RichTextField({
     event.preventDefault();
     insertPlainText(editorRef.current, event.clipboardData.getData("text/plain"));
     syncFromEditor();
+  }
+
+  async function uploadImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const asset = await createImageMediaAsset(file);
+      const nextMedia = onAddMedia(asset);
+      insertImage(editorRef.current, asset.dataUrl, asset.name, savedRangeRef.current);
+      setUploadError("");
+      syncFromEditor(nextMedia);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Image upload failed.");
+    }
+  }
+
+  function saveSelection() {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0 || !selectionInsideEditor(editor, selection)) {
+      return;
+    }
+    savedRangeRef.current = selection.getRangeAt(0).cloneRange();
   }
 
   return (
@@ -1737,6 +1823,27 @@ function RichTextField({
               </button>
             );
           })}
+          <button
+            type="button"
+            className="rich-text-button"
+            aria-label="Image"
+            title="Image"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              saveSelection();
+              fileInputRef.current?.click();
+            }}
+          >
+            <ImagePlus size={16} aria-hidden="true" />
+          </button>
+          <input
+            ref={fileInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept={IMAGE_FILE_ACCEPT}
+            aria-label="Image file"
+            onChange={uploadImage}
+          />
         </div>
         <div
           ref={editorRef}
@@ -1747,9 +1854,13 @@ function RichTextField({
           aria-required={required}
           contentEditable
           data-placeholder={placeholder}
-          onInput={syncFromEditor}
+          onInput={() => syncFromEditor()}
+          onKeyUp={saveSelection}
+          onMouseUp={saveSelection}
+          onFocus={saveSelection}
           onPaste={pastePlainText}
         />
+        {uploadError && <p className="rich-text-status">{uploadError}</p>}
       </div>
     </div>
   );
@@ -1834,6 +1945,41 @@ function insertPlainText(editor: HTMLDivElement | null, text: string) {
   range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
+}
+
+function insertImage(editor: HTMLDivElement | null, src: string, alt: string, savedRange: Range | null) {
+  if (!editor) return;
+  editor.focus();
+
+  const image = document.createElement("img");
+  image.src = src;
+  image.alt = alt;
+  image.className = "rich-text-image";
+
+  const selection = window.getSelection();
+  const range =
+    savedRange && rangeInsideElement(editor, savedRange)
+      ? savedRange.cloneRange()
+      : selection && selection.rangeCount > 0 && selectionInsideEditor(editor, selection)
+        ? selection.getRangeAt(0)
+        : null;
+
+  if (!range) {
+    editor.append(image);
+    placeCursorAtEnd(editor);
+    return;
+  }
+
+  range.deleteContents();
+  range.insertNode(image);
+  range.setStartAfter(image);
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function rangeInsideElement(element: Element, range: Range) {
+  return element.contains(range.startContainer) && element.contains(range.endContainer);
 }
 
 function placeCursorAtEnd(editor: HTMLDivElement) {
@@ -2033,9 +2179,14 @@ function upsertByCardId<T extends { cardId: string }>(items: T[], item: T) {
   return exists ? items.map((existing) => (existing.cardId === item.cardId ? item : existing)) : [...items, item];
 }
 
+function appendMediaAssets(current: MediaAsset[], added: MediaAsset[]) {
+  const existingIds = new Set(current.map((asset) => asset.id));
+  return [...current, ...added.filter((asset) => !existingIds.has(asset.id))];
+}
+
 function getCardQuestionPreview(card: Card) {
   // Deck lists stay compact: show prompt text only, never answer-side content.
-  return stripHtml(card.recto) || "Untitled card";
+  return stripHtml(card.recto) || (hasCardHtmlContent(card.recto) ? "Image card" : "Untitled card");
 }
 
 function downloadBlob(blob: Blob, fileName: string) {

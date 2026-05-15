@@ -52,6 +52,28 @@ describe("simple card rendering", () => {
     expect(rendered.answer).toContain("<em>Answer</em>");
     expect(rendered.answer).toContain("<code>const value = 1;</code>");
   });
+
+  it("resolves local media refs into safe image data URLs", () => {
+    const rendered = renderCard(
+      createCard({
+        recto: '<img src="media://media_1" alt="Map">',
+        verso: "Answer",
+        details: ""
+      }),
+      [
+        {
+          id: "media_1",
+          name: "map.png",
+          mime: "image/png",
+          dataUrl: "data:image/png;base64,aW1hZ2U=",
+          createdAt: "2026-05-13T00:00:00.000Z"
+        }
+      ]
+    );
+
+    expect(rendered.recto).toContain('src="data:image/png;base64,aW1hZ2U="');
+    expect(rendered.recto).toContain('alt="Map"');
+  });
 });
 
 function createCard(overrides: Pick<Card, "recto" | "verso" | "details">): Card {

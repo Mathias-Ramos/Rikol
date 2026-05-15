@@ -18,4 +18,14 @@ describe("sanitizeHtml", () => {
     expect(result).toContain("<em>Italic</em>");
     expect(result).toContain("<code>const value = 1;</code>");
   });
+
+  it("keeps safe image sources and strips unsafe image attributes", () => {
+    const result = sanitizeHtml(
+      '<img src="media://media_1" alt="Diagram" onerror="bad()"><img src="data:text/html;base64,PGgxPmJhZDwvaDE+">'
+    );
+
+    expect(result).toContain('<img src="media://media_1" alt="Diagram">');
+    expect(result).not.toContain("onerror");
+    expect(result).not.toContain("data:text/html");
+  });
 });

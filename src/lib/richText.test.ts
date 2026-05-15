@@ -11,4 +11,10 @@ describe("rich text normalization", () => {
   it("treats empty rich markup as blank", () => {
     expect(normalizeRichTextHtml("<strong><br></strong>")).toBe("");
   });
+
+  it("keeps image-only rich text fields", () => {
+    expect(normalizeRichTextHtml('<img src="media://media_1" alt="Diagram">')).toBe(
+      '<img src="media://media_1" alt="Diagram">'
+    );
+  });
 });

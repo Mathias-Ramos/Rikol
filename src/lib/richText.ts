@@ -1,9 +1,9 @@
 import { sanitizeHtml } from "./sanitize";
-import { stripHtml } from "./utils";
+import { hasCardHtmlContent } from "./media";
 
 export function normalizeRichTextHtml(html: string) {
   const sanitized = sanitizeHtml(html);
-  if (!stripHtml(sanitized)) {
+  if (!hasCardHtmlContent(sanitized)) {
     return "";
   }
 
