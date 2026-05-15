@@ -108,3 +108,5 @@ Here is information about project history, decisions already made, or constraint
 - Review grading buttons (Again, Hard, Good, Easy) stay on one row.
 - Review grading buttons show compact next-due timing below each option.
 - CSV export uses `deck,recto,verso,details,tags`; CSV import still accepts legacy `front/back` columns.
+- APKG import accepts raw SQLite or zstd-compressed `collection.anki21`, validates Anki tables, then falls back to `collection.anki2`.
+- APKG import preserves multiple Anki card templates per note as distinct study directions and maps rendered template prompts/answers into simple cards.

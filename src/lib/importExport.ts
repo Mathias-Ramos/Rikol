@@ -10,8 +10,33 @@ import { migrateAppData } from "./storage";
 import { bytesToBase64, dataUrlToBytes, nowIso, stripHtml, textChecksum, uid } from "./utils";
 
 const BACKUP_VERSION = 1;
+const SQLITE_HEADER = "SQLite format 3\0";
+const REQUIRED_ANKI_COLUMNS = {
+  cards: ["id", "did", "nid", "ord"],
+  col: ["decks", "models"],
+  notes: ["id", "guid", "mid", "tags", "flds"]
+};
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const AUDIO_VIDEO_RE = /\.(mp3|wav|ogg|m4a|mp4|webm|mov)$/i;
+const DETAIL_FIELD_RE = /^(details?|extra|notes?)$/i;
+
+interface AnkiField {
+  name: string;
+  ord: number;
+}
+
+interface AnkiTemplate {
+  name?: string;
+  ord: number;
+  qfmt?: string;
+  afmt?: string;
+}
+
+interface AnkiModel {
+  name?: string;
+  flds?: AnkiField[];
+  tmpls?: AnkiTemplate[];
+}
 
 export function exportJsonBackup(data: AppData) {
   return new Blob(
@@ -119,31 +144,34 @@ export async function importApkg(file: File, existingCards: Card[]): Promise<Imp
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
   const warnings: ImportReport["warnings"] = [];
   const media = await readAnkiMedia(zip, warnings);
-  const collectionBytes = await readCollectionBytes(zip, warnings);
+  const SQL = await initSqlJs({ locateFile: () => sqlWasmUrl });
+  const collectionBytes = await readCollectionBytes(zip, warnings, SQL);
 
   if (!collectionBytes) {
     throw new Error("No readable Anki collection found.");
   }
 
-  const SQL = await initSqlJs({ locateFile: () => sqlWasmUrl });
   const db = new SQL.Database(collectionBytes);
   const createdAt = nowIso();
   const ankiDecks = readDeckMap(db, warnings);
+  const ankiModels = readModelMap(db, warnings);
   const deckByAnkiId = new Map<number, Deck>();
   const cards: Card[] = [];
 
   const rows = db.exec(
-    "select c.id as cid, c.did as did, n.id as nid, n.guid as guid, n.tags as tags, n.flds as flds from cards c join notes n on c.nid = n.id order by c.id"
+    "select c.id as cid, c.did as did, c.ord as ord, n.id as nid, n.guid as guid, n.mid as mid, n.tags as tags, n.flds as flds from cards c join notes n on c.nid = n.id order by c.id"
   );
 
   const values = rows[0]?.values ?? [];
   for (const row of values) {
     const cardId = String(row[0]);
     const deckId = Number(row[1]);
-    const noteId = String(row[2]);
-    const guid = String(row[3] ?? noteId);
-    const tags = splitTags(String(row[4] ?? ""));
-    const fields = String(row[5] ?? "")
+    const cardOrd = Number(row[2]);
+    const noteId = String(row[3]);
+    const guid = String(row[4] ?? noteId);
+    const modelId = Number(row[5]);
+    const tags = splitTags(String(row[6] ?? ""));
+    const fields = String(row[7] ?? "")
       .split("\x1f")
       .map((value) => replaceMediaRefs(sanitizeHtml(value), media));
 
@@ -163,9 +191,10 @@ export async function importApkg(file: File, existingCards: Card[]): Promise<Imp
     }
 
     const deck = deckByAnkiId.get(deckId)!;
-    const recto = fields[0] ?? "";
-    const verso = fields[1] ?? "";
-    const details = fields.slice(2).filter(Boolean).join("<br/>");
+    const rendered = renderAnkiCard(ankiModels.get(modelId), cardOrd, fields, warnings);
+    const recto = rendered.recto;
+    const verso = rendered.verso;
+    const details = rendered.details;
     if (!recto && !verso) {
       warnings.push({ level: "warning", message: `Skipped blank Anki card ${cardId}.` });
       continue;
@@ -179,7 +208,7 @@ export async function importApkg(file: File, existingCards: Card[]): Promise<Imp
       details,
       tags,
       suspended: false,
-      source: { type: "anki", externalId: guid, fileName: file.name },
+      source: { type: "anki", externalId: `${guid}:${cardOrd}`, fileName: file.name },
       createdAt,
       updatedAt: createdAt
     });
@@ -192,7 +221,7 @@ export async function importApkg(file: File, existingCards: Card[]): Promise<Imp
   report.warnings.push(...warnings);
   report.warnings.push({
     level: "info",
-    message: "Anki note fields are mapped to safe simple cards."
+    message: "Anki card templates are mapped to safe simple cards."
   });
 
   return { decks, cards, media, report };
@@ -479,29 +508,77 @@ async function readAnkiMedia(zip: JSZip, warnings: ImportReport["warnings"]) {
   return assets;
 }
 
-async function readCollectionBytes(zip: JSZip, warnings: ImportReport["warnings"]) {
+async function readCollectionBytes(zip: JSZip, warnings: ImportReport["warnings"], SQL: Awaited<ReturnType<typeof initSqlJs>>) {
   const legacy = zip.file("collection.anki2");
   const modern = zip.file("collection.anki21");
 
   if (modern) {
-    try {
-      const compressed = await modern.async("uint8array");
-      const decoder = new ZSTDDecoder();
-      await decoder.init();
-      return decoder.decode(compressed);
-    } catch {
+    const collection = await readModernCollectionBytes(modern, warnings);
+    if (collection && hasRequiredAnkiSchema(collection, SQL)) {
+      return collection;
+    }
+    warnings.push({
+      level: "warning",
+      message: "Modern collection is not a compatible Anki database. Trying legacy collection."
+    });
+  }
+
+  if (legacy) {
+    const collection = await legacy.async("uint8array");
+    if (hasRequiredAnkiSchema(collection, SQL)) {
+      return collection;
+    }
+    warnings.push({ level: "warning", message: "Legacy collection is not a compatible Anki database." });
+  }
+
+  return undefined;
+}
+
+async function readModernCollectionBytes(modern: JSZip.JSZipObject, warnings: ImportReport["warnings"]) {
+  const bytes = await modern.async("uint8array");
+  if (isSQLiteDatabase(bytes)) {
+    return bytes;
+  }
+
+  // Modern .anki21 files may be raw SQLite or zstd-compressed SQLite.
+  try {
+    const decoder = new ZSTDDecoder();
+    await decoder.init();
+    const decoded = decoder.decode(bytes);
+    return decoded.length ? decoded : undefined;
+  } catch {
+    if (!warnings.some((warning) => warning.message === "Modern compressed collection could not be decoded. Trying legacy collection.")) {
       warnings.push({
         level: "warning",
         message: "Modern compressed collection could not be decoded. Trying legacy collection."
       });
     }
   }
+  return undefined;
+}
 
-  if (legacy) {
-    return legacy.async("uint8array");
+function isSQLiteDatabase(bytes: Uint8Array) {
+  if (bytes.length < SQLITE_HEADER.length) {
+    return false;
   }
 
-  return undefined;
+  return Array.from(SQLITE_HEADER).every((char, index) => bytes[index] === char.charCodeAt(0));
+}
+
+function hasRequiredAnkiSchema(bytes: Uint8Array, SQL: Awaited<ReturnType<typeof initSqlJs>>) {
+  let db: SqlDatabase | undefined;
+  try {
+    db = new SQL.Database(bytes);
+    return Object.entries(REQUIRED_ANKI_COLUMNS).every(([table, columns]) => {
+      const result = db?.exec(`pragma table_info(${table})`);
+      const tableColumns = new Set((result?.[0]?.values ?? []).map((row) => String(row[1])));
+      return columns.every((column) => tableColumns.has(column));
+    });
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
 }
 
 function readDeckMap(db: SqlDatabase, warnings: ImportReport["warnings"]) {
@@ -517,6 +594,176 @@ function readDeckMap(db: SqlDatabase, warnings: ImportReport["warnings"]) {
     warnings.push({ level: "warning", message: "Could not read Anki deck names." });
   }
   return deckMap;
+}
+
+function readModelMap(db: SqlDatabase, warnings: ImportReport["warnings"]) {
+  const modelMap = new Map<number, AnkiModel>();
+  try {
+    const result = db.exec("select models from col limit 1");
+    const modelsJson = String(result[0]?.values[0]?.[0] ?? "{}");
+    const models = JSON.parse(modelsJson) as Record<string, AnkiModel>;
+    for (const [id, model] of Object.entries(models)) {
+      modelMap.set(Number(id), model);
+    }
+  } catch {
+    pushWarningOnce(warnings, "Could not read Anki card templates. Using note field order.");
+  }
+  return modelMap;
+}
+
+function renderAnkiCard(
+  model: AnkiModel | undefined,
+  cardOrd: number,
+  fields: string[],
+  warnings: ImportReport["warnings"]
+) {
+  const template = model?.tmpls?.find((item) => Number(item.ord) === cardOrd) ?? model?.tmpls?.[cardOrd];
+  if (!model || !template) {
+    pushWarningOnce(warnings, "Could not read Anki card templates. Using note field order.");
+    return simpleAnkiCard(fields);
+  }
+
+  const fieldEntries = fields.map((value, index) => ({
+    index,
+    name: ankiFieldName(model, index),
+    value
+  }));
+  const fieldValues = new Map(fieldEntries.map((entry) => [entry.name, entry.value]));
+  const qfmt = template.qfmt ?? `{{${fieldEntries[0]?.name ?? "Front"}}}`;
+  const afmt = template.afmt ?? `{{${fieldEntries[1]?.name ?? fieldEntries[0]?.name ?? "Back"}}}`;
+  const promptFields = new Set(collectTemplateFields(qfmt, fieldValues));
+  const answerFields = new Set(
+    collectTemplateFields(afmt, fieldValues).filter((name) => !promptFields.has(name) && !DETAIL_FIELD_RE.test(name))
+  );
+  const detailFields = new Set(
+    fieldEntries
+      .filter((entry) => {
+        if (!entry.value) return false;
+        if (DETAIL_FIELD_RE.test(entry.name)) return true;
+        return !promptFields.has(entry.name) && !answerFields.has(entry.name);
+      })
+      .map((entry) => entry.name)
+  );
+
+  // Hide prompt and detail fields while rendering answer side so reverse cards stay distinct.
+  const hiddenAnswerFields = new Set([...promptFields, ...detailFields]);
+  const recto = cleanRenderedHtml(renderAnkiTemplate(qfmt, fieldValues));
+  const verso = cleanRenderedHtml(renderAnkiTemplate(afmt, fieldValues, hiddenAnswerFields));
+  const details = joinFieldValues(
+    fieldEntries.filter((entry) => detailFields.has(entry.name)).map((entry) => entry.value)
+  );
+  const fallback = simpleAnkiCard(fields);
+
+  return {
+    recto: recto || fallback.recto,
+    verso: verso || joinFieldValues(fieldEntries.filter((entry) => answerFields.has(entry.name)).map((entry) => entry.value)) || fallback.verso,
+    details
+  };
+}
+
+function simpleAnkiCard(fields: string[]) {
+  const recto = fields[0] ?? "";
+  const verso = fields[1] ?? "";
+  return {
+    recto,
+    verso: verso || recto,
+    details: joinFieldValues(fields.slice(2))
+  };
+}
+
+function ankiFieldName(model: AnkiModel, index: number) {
+  return model.flds?.find((field) => Number(field.ord) === index)?.name ?? `Field ${index + 1}`;
+}
+
+function collectTemplateFields(template: string, fieldValues: Map<string, string>) {
+  const fields: string[] = [];
+  for (const match of template.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
+    const fieldName = ankiTokenFieldName(match[1]);
+    if (fieldName && fieldValues.has(fieldName) && !fields.includes(fieldName)) {
+      fields.push(fieldName);
+    }
+  }
+  return fields;
+}
+
+function renderAnkiTemplate(template: string, fieldValues: Map<string, string>, hiddenFields = new Set<string>()) {
+  let output = renderConditionalBlocks(template, fieldValues, hiddenFields);
+  output = output.replace(/\{\{\s*FrontSide\s*\}\}/g, "");
+  output = output.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_match, token: string) => {
+    const fieldName = ankiTokenFieldName(token);
+    if (!fieldName || hiddenFields.has(fieldName)) {
+      return "";
+    }
+    const value = fieldValues.get(fieldName) ?? "";
+    return token.trim().startsWith("text:") ? stripHtml(value) : value;
+  });
+  return output;
+}
+
+function renderConditionalBlocks(template: string, fieldValues: Map<string, string>, hiddenFields: Set<string>) {
+  let output = template;
+  output = output.replace(/\{\{\s*#([^{}]+?)\s*\}\}([\s\S]*?)\{\{\s*\/\1\s*\}\}/g, (_match, token: string, body: string) => {
+    const fieldName = ankiTokenFieldName(token);
+    const value = fieldName && !hiddenFields.has(fieldName) ? fieldValues.get(fieldName) : "";
+    return stripHtml(value ?? "") ? body : "";
+  });
+  output = output.replace(/\{\{\s*\^([^{}]+?)\s*\}\}([\s\S]*?)\{\{\s*\/\1\s*\}\}/g, (_match, token: string, body: string) => {
+    const fieldName = ankiTokenFieldName(token);
+    const value = fieldName && !hiddenFields.has(fieldName) ? fieldValues.get(fieldName) : "";
+    return stripHtml(value ?? "") ? "" : body;
+  });
+  return output;
+}
+
+function ankiTokenFieldName(token: string) {
+  let value = token.trim();
+  if (!value || value === "FrontSide") {
+    return "";
+  }
+  if (value.startsWith("/") || value.startsWith("#") || value.startsWith("^")) {
+    value = value.slice(1).trim();
+  }
+  if (value.includes(":")) {
+    value = value.slice(value.lastIndexOf(":") + 1).trim();
+  }
+  return value;
+}
+
+function cleanRenderedHtml(html: string) {
+  return removeEmptyHtml(sanitizeHtml(html)).trim();
+}
+
+function removeEmptyHtml(html: string) {
+  if (!html) {
+    return "";
+  }
+
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const root = doc.body.firstElementChild!;
+  let removed = true;
+  while (removed) {
+    removed = false;
+    for (const child of Array.from(root.querySelectorAll("*")).reverse()) {
+      if (child.tagName === "IMG") {
+        continue;
+      }
+      if (!stripHtml(child.innerHTML) && !child.querySelector("img")) {
+        child.remove();
+        removed = true;
+      }
+    }
+  }
+  return root.innerHTML.replace(/^(<br\s*\/?>\s*)+|(\s*<br\s*\/?>)+$/gi, "");
+}
+
+function joinFieldValues(values: string[]) {
+  return values.filter(Boolean).join("<br/>");
+}
+
+function pushWarningOnce(warnings: ImportReport["warnings"], message: string) {
+  if (!warnings.some((warning) => warning.message === message)) {
+    warnings.push({ level: "warning", message });
+  }
 }
 
 function replaceMediaRefs(html: string, media: MediaAsset[]) {
