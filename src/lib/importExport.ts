@@ -34,9 +34,18 @@ interface AnkiTemplate {
 
 interface AnkiModel {
   name?: string;
+  type?: number;
   flds?: AnkiField[];
   tmpls?: AnkiTemplate[];
 }
+
+interface AnkiFieldEntry {
+  index: number;
+  name: string;
+  value: string;
+}
+
+type ClozeRenderSide = "question" | "answer";
 
 export function exportJsonBackup(data: AppData) {
   return new Blob(
@@ -617,13 +626,18 @@ function renderAnkiCard(
   fields: string[],
   warnings: ImportReport["warnings"]
 ) {
-  const template = model?.tmpls?.find((item) => Number(item.ord) === cardOrd) ?? model?.tmpls?.[cardOrd];
-  if (!model || !template) {
+  if (!model) {
     pushWarningOnce(warnings, "Could not read Anki card templates. Using note field order.");
     return simpleAnkiCard(fields);
   }
 
-  const fieldEntries = fields.map((value, index) => ({
+  const template = findAnkiTemplate(model, cardOrd);
+  if (!template) {
+    pushWarningOnce(warnings, "Could not read Anki card templates. Using note field order.");
+    return simpleAnkiCard(fields);
+  }
+
+  const fieldEntries: AnkiFieldEntry[] = fields.map((value, index) => ({
     index,
     name: ankiFieldName(model, index),
     value
@@ -631,6 +645,11 @@ function renderAnkiCard(
   const fieldValues = new Map(fieldEntries.map((entry) => [entry.name, entry.value]));
   const qfmt = template.qfmt ?? `{{${fieldEntries[0]?.name ?? "Front"}}}`;
   const afmt = template.afmt ?? `{{${fieldEntries[1]?.name ?? fieldEntries[0]?.name ?? "Back"}}}`;
+
+  if (isClozeTemplate(qfmt) || isClozeTemplate(afmt)) {
+    return renderClozeAnkiCard(cardOrd, fields, fieldEntries, fieldValues, qfmt, afmt);
+  }
+
   const promptFields = new Set(collectTemplateFields(qfmt, fieldValues));
   const answerFields = new Set(
     collectTemplateFields(afmt, fieldValues).filter((name) => !promptFields.has(name) && !DETAIL_FIELD_RE.test(name))
@@ -661,6 +680,44 @@ function renderAnkiCard(
   };
 }
 
+function findAnkiTemplate(model: AnkiModel, cardOrd: number) {
+  const template = model.tmpls?.find((item) => Number(item.ord) === cardOrd) ?? model.tmpls?.[cardOrd];
+  if (template) {
+    return template;
+  }
+
+  // Cloze models use one template to generate c1, c2, c3... card ords.
+  return model.tmpls?.find((item) => isClozeTemplate(item.qfmt) || isClozeTemplate(item.afmt));
+}
+
+function renderClozeAnkiCard(
+  cardOrd: number,
+  fields: string[],
+  fieldEntries: AnkiFieldEntry[],
+  fieldValues: Map<string, string>,
+  qfmt: string,
+  afmt: string
+) {
+  const clozeNumber = cardOrd + 1;
+  const clozeFields = new Set([...collectClozeTemplateFields(qfmt, fieldValues), ...collectClozeTemplateFields(afmt, fieldValues)]);
+  const templateFields = new Set([...collectTemplateFields(qfmt, fieldValues), ...collectTemplateFields(afmt, fieldValues)]);
+  const recto = cleanRenderedHtml(renderAnkiTemplate(qfmt, fieldValues, new Set(), { number: clozeNumber, side: "question" }));
+  const revealedAnswer = cleanRenderedHtml(renderAnkiTemplate(afmt, fieldValues, new Set(), { number: clozeNumber, side: "answer" }));
+  const clozeAnswers = Array.from(clozeFields).flatMap((fieldName) => collectClozeAnswers(fieldValues.get(fieldName) ?? "", clozeNumber));
+  const fallback = simpleAnkiCard(fields);
+  const verso = cleanRenderedHtml(joinFieldValues(clozeAnswers)) || revealedAnswer || fallback.verso;
+  const extraDetails = joinFieldValues(
+    fieldEntries.filter((entry) => entry.value && !templateFields.has(entry.name)).map((entry) => entry.value)
+  );
+  const details = joinFieldValues([samePlainText(revealedAnswer, verso) ? "" : revealedAnswer, extraDetails]);
+
+  return {
+    recto: recto || fallback.recto,
+    verso,
+    details
+  };
+}
+
 function simpleAnkiCard(fields: string[]) {
   const recto = fields[0] ?? "";
   const verso = fields[1] ?? "";
@@ -686,7 +743,24 @@ function collectTemplateFields(template: string, fieldValues: Map<string, string
   return fields;
 }
 
-function renderAnkiTemplate(template: string, fieldValues: Map<string, string>, hiddenFields = new Set<string>()) {
+function collectClozeTemplateFields(template: string, fieldValues: Map<string, string>) {
+  const fields: string[] = [];
+  for (const match of template.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
+    const token = match[1];
+    const fieldName = ankiTokenFieldName(token);
+    if (isClozeToken(token) && fieldName && fieldValues.has(fieldName) && !fields.includes(fieldName)) {
+      fields.push(fieldName);
+    }
+  }
+  return fields;
+}
+
+function renderAnkiTemplate(
+  template: string,
+  fieldValues: Map<string, string>,
+  hiddenFields = new Set<string>(),
+  cloze?: { number: number; side: ClozeRenderSide }
+) {
   let output = renderConditionalBlocks(template, fieldValues, hiddenFields);
   output = output.replace(/\{\{\s*FrontSide\s*\}\}/g, "");
   output = output.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_match, token: string) => {
@@ -695,6 +769,9 @@ function renderAnkiTemplate(template: string, fieldValues: Map<string, string>, 
       return "";
     }
     const value = fieldValues.get(fieldName) ?? "";
+    if (cloze && isClozeToken(token)) {
+      return renderClozeText(value, cloze.number, cloze.side);
+    }
     return token.trim().startsWith("text:") ? stripHtml(value) : value;
   });
   return output;
@@ -729,8 +806,167 @@ function ankiTokenFieldName(token: string) {
   return value;
 }
 
+function isClozeTemplate(template = "") {
+  return /\{\{\s*cloze:/i.test(template);
+}
+
+function isClozeToken(token: string) {
+  return token.trim().toLowerCase().startsWith("cloze:");
+}
+
+function collectClozeAnswers(value: string, clozeNumber: number) {
+  const answers: string[] = [];
+  walkClozeTokens(value, (token) => {
+    const text = splitClozeBody(token.body).text;
+    if (token.number === clozeNumber) {
+      answers.push(renderClozeText(text, clozeNumber, "answer"));
+    } else {
+      answers.push(...collectClozeAnswers(text, clozeNumber));
+    }
+  });
+  return answers;
+}
+
+function renderClozeText(value: string, clozeNumber: number, side: ClozeRenderSide): string {
+  let output = "";
+  let index = 0;
+
+  walkClozeTokens(value, (token) => {
+    output += value.slice(index, token.start);
+    const { text, hint } = splitClozeBody(token.body);
+    if (token.number === clozeNumber && side === "question") {
+      output += clozePlaceholder(hint);
+    } else {
+      output += renderClozeText(text, clozeNumber, side);
+    }
+    index = token.end;
+  });
+
+  return output + value.slice(index);
+}
+
+function walkClozeTokens(value: string, visit: (token: { start: number; end: number; number: number; body: string }) => void) {
+  let index = 0;
+  while (index < value.length) {
+    const opening = findNextClozeOpening(value, index);
+    if (!opening) {
+      return;
+    }
+
+    const close = findClozeClose(value, opening.contentStart);
+    if (close < 0) {
+      return;
+    }
+
+    visit({
+      start: opening.start,
+      end: close + 2,
+      number: opening.number,
+      body: value.slice(opening.contentStart, close)
+    });
+    index = close + 2;
+  }
+}
+
+function findNextClozeOpening(value: string, start: number) {
+  const match = /\{\{c(\d+)::/i.exec(value.slice(start));
+  if (!match) {
+    return undefined;
+  }
+  const tokenStart = start + match.index;
+  return {
+    start: tokenStart,
+    number: Number(match[1]),
+    contentStart: tokenStart + match[0].length
+  };
+}
+
+function findClozeClose(value: string, start: number) {
+  let depth = 1;
+  let index = start;
+  while (index < value.length) {
+    const nested = clozeOpeningAt(value, index);
+    if (nested) {
+      depth += 1;
+      index = nested.contentStart;
+      continue;
+    }
+
+    if (value.startsWith("}}", index)) {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+      index += 2;
+      continue;
+    }
+
+    index += 1;
+  }
+  return -1;
+}
+
+function clozeOpeningAt(value: string, index: number) {
+  const match = /^\{\{c(\d+)::/i.exec(value.slice(index));
+  if (!match) {
+    return undefined;
+  }
+  return {
+    number: Number(match[1]),
+    contentStart: index + match[0].length
+  };
+}
+
+function splitClozeBody(body: string) {
+  let hintStart = -1;
+  let depth = 0;
+  let index = 0;
+  while (index < body.length - 1) {
+    const nested = clozeOpeningAt(body, index);
+    if (nested) {
+      depth += 1;
+      index = nested.contentStart;
+      continue;
+    }
+
+    if (body.startsWith("}}", index) && depth > 0) {
+      depth -= 1;
+      index += 2;
+      continue;
+    }
+
+    if (depth === 0 && body.startsWith("::", index)) {
+      hintStart = index;
+    }
+    index += 1;
+  }
+
+  if (hintStart < 0) {
+    return { text: body, hint: "" };
+  }
+  return { text: body.slice(0, hintStart), hint: body.slice(hintStart + 2) };
+}
+
+function clozePlaceholder(hint: string) {
+  const hintText = stripHtml(renderClozeText(hint, 0, "answer")).trim();
+  return `<span class="cloze">[${hintText ? escapeHtml(hintText) : "..."}]</span>`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function cleanRenderedHtml(html: string) {
   return removeEmptyHtml(sanitizeHtml(html)).trim();
+}
+
+function samePlainText(left: string, right: string) {
+  return stripHtml(left).trim() === stripHtml(right).trim();
 }
 
 function removeEmptyHtml(html: string) {
@@ -744,7 +980,7 @@ function removeEmptyHtml(html: string) {
   while (removed) {
     removed = false;
     for (const child of Array.from(root.querySelectorAll("*")).reverse()) {
-      if (child.tagName === "IMG") {
+      if (child.tagName === "IMG" || child.tagName === "BR") {
         continue;
       }
       if (!stripHtml(child.innerHTML) && !child.querySelector("img")) {

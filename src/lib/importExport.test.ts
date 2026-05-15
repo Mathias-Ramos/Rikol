@@ -123,6 +123,51 @@ describe("APKG importer", () => {
     expect(bundle.cards[0].recto).not.toBe(bundle.cards[1].recto);
     expect(bundle.report.cardCount).toBe(2);
   });
+
+  it("renders cloze ords from one generated Anki template", async () => {
+    const file = await apkgFile("cloze.apkg", {
+      "collection.anki2": await ankiCollection({
+        deckName: "Python Cloze",
+        recto: "",
+        verso: "",
+        modelName: "Cloze",
+        modelType: 1,
+        fields: [
+          {
+            name: "Text",
+            value: "A {{c1::docstring}} is {{c2::first string::definition}} in a module."
+          },
+          { name: "Back Extra", value: "Python stores it on __doc__." }
+        ],
+        templates: [
+          {
+            name: "Cloze",
+            ord: 0,
+            qfmt: "{{cloze:Text}}",
+            afmt: "{{cloze:Text}}<br>{{Back Extra}}"
+          }
+        ],
+        cardOrds: [0, 1]
+      })
+    });
+
+    const bundle = await importApkg(file, []);
+
+    expect(bundle.cards).toHaveLength(2);
+    expect(bundle.cards[0]).toMatchObject({
+      recto: 'A <span class="cloze">[...]</span> is first string in a module.',
+      verso: "docstring",
+      details: "A docstring is first string in a module.<br>Python stores it on __doc__.",
+      source: { externalId: "test-guid:0" }
+    });
+    expect(bundle.cards[1]).toMatchObject({
+      recto: 'A docstring is <span class="cloze">[definition]</span> in a module.',
+      verso: "first string",
+      details: "A docstring is first string in a module.<br>Python stores it on __doc__.",
+      source: { externalId: "test-guid:1" }
+    });
+    expect(bundle.report.warnings.some((warning) => warning.message.includes("Could not read Anki card templates"))).toBe(false);
+  });
 });
 
 function textFile(name: string, contents: string) {
@@ -152,7 +197,10 @@ async function ankiCollection({
   details = "",
   tags = "",
   fields,
-  templates = [{ name: "Card 1", ord: 0, qfmt: "{{Front}}", afmt: "{{Back}}" }]
+  templates = [{ name: "Card 1", ord: 0, qfmt: "{{Front}}", afmt: "{{Back}}" }],
+  modelName = "Test model",
+  modelType = 0,
+  cardOrds
 }: {
   deckName: string;
   recto: string;
@@ -161,6 +209,9 @@ async function ankiCollection({
   tags?: string;
   fields?: Array<{ name: string; value: string }>;
   templates?: Array<{ name: string; ord: number; qfmt: string; afmt: string }>;
+  modelName?: string;
+  modelType?: number;
+  cardOrds?: number[];
 }) {
   const SQL = await initSqlJs();
   const db = new SQL.Database();
@@ -177,7 +228,8 @@ async function ankiCollection({
   const models = {
     [modelId]: {
       id: modelId,
-      name: "Test model",
+      name: modelName,
+      type: modelType,
       flds: noteFields.map((field, ord) => ({ name: field.name, ord })),
       tmpls: templates
     }
@@ -188,8 +240,8 @@ async function ankiCollection({
   db.run("create table cards (id integer primary key, nid integer not null, did integer not null, ord integer not null)");
   db.run("insert into col values (?, ?)", [JSON.stringify({ [deckId]: { id: deckId, name: deckName } }), JSON.stringify(models)]);
   db.run("insert into notes values (?, ?, ?, ?, ?)", [noteId, "test-guid", modelId, tags, fieldValues]);
-  templates.forEach((template) => {
-    db.run("insert into cards values (?, ?, ?, ?)", [cardId + template.ord, noteId, deckId, template.ord]);
+  (cardOrds ?? templates.map((template) => template.ord)).forEach((ord) => {
+    db.run("insert into cards values (?, ?, ?, ?)", [cardId + ord, noteId, deckId, ord]);
   });
 
   const bytes = db.export();
