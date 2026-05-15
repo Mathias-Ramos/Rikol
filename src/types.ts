@@ -30,6 +30,7 @@ export interface Card {
   details: string;
   tags: string[];
   suspended: boolean;
+  forceTypedAnswer: boolean;
   source?: CardSource;
   createdAt: string;
   updatedAt: string;

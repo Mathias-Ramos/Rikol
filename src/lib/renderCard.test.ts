@@ -61,6 +61,7 @@ function createCard(overrides: Pick<Card, "recto" | "verso" | "details">): Card 
     ...overrides,
     tags: [],
     suspended: false,
+    forceTypedAnswer: false,
     createdAt: "2026-05-13T00:00:00.000Z",
     updatedAt: "2026-05-13T00:00:00.000Z"
   };

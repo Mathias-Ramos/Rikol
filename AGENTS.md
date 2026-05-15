@@ -4,7 +4,7 @@ Project description in 1-2 paragraphs:
 
 Rikol is a mobile-first, local-first spaced repetition web app. It helps users create decks, review simple recto/verso flashcards with an Anki-like flow, import/export decks, personalize profile name, and track progress through XP, levels, badges, and streaks.
 
-Data stays in browser IndexedDB. App works as PWA shell and supports manual JSON backup, CSV exchange, and best-effort Anki `.apkg` import/export. Cards store Recto, Verso, and optional Details with bold, italic, and inline code rich text; review mode alternates between reveal and typed answer after each completed review.
+Data stays in browser IndexedDB. App works as PWA shell and supports manual JSON backup, CSV exchange, and best-effort Anki `.apkg` import/export. Cards store Recto, Verso, and optional Details with bold, italic, and inline code rich text; review mode alternates between reveal and typed answer after each completed review, with long Verso answers defaulting to reveal-only unless card forces typed answers.
 
 # Tech Stack
 
@@ -37,7 +37,7 @@ Current "Directory Tree" with short description of each folder and files (5-30 w
 ├── src/main.tsx - React root and production service worker registration.
 ├── src/types.ts - Core Deck, Card, Media, Review, Import, answer mode, and settings types.
 ├── src/data/ - Demo deck and simple recto/verso/detail card seed data.
-├── src/lib/ - Storage migration, scheduler, rewards and badge targets, rich text normalization, sanitizing, rendering, and import/export logic.
+├── src/lib/ - Storage migration, scheduler, answer-mode gating, rewards, rich text, sanitizing, rendering, and import/export logic.
 ├── src/test/ - Vitest setup.
 └── tests/e2e/ - Playwright onboarding, profile, navigation, deck deletion, rich text card form, flip, and review tests.
 ```
@@ -104,6 +104,8 @@ Here is information about project history, decisions already made, or constraint
 - Templates were removed from app state and UI. Storage migrates legacy template cards into simple cards.
 - Review mode is stored per review state as `answerMode: "reveal" | "type"` and toggles after every grade, regardless grade value.
 - Type-mode review requires typed input before Reveal. Text is not auto-graded; user still chooses Again, Hard, Good, or Easy.
+- Cards with plain-text Verso longer than 50 characters use reveal-only review unless `forceTypedAnswer` is true.
+- Card create/edit form includes Require typed answer checkbox; forced cards always show typed input, including long answers and first review.
 - Review grading awards XP as `again +1`, `hard +2`, `good +3`, and `easy +4`; each grade shows quick `+N XP` animation above mobile review actions.
 - Review grading buttons (Again, Hard, Good, Easy) stay on one row.
 - Review grading buttons show compact next-due timing below each option.

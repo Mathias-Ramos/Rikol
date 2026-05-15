@@ -86,4 +86,29 @@ describe("storage migration", () => {
 
     expect(migrated.reviewStates[0].answerMode).toBe("reveal");
   });
+
+  it("defaults old cards to automatic answer mode and keeps forced typed cards", () => {
+    const migrated = migrateAppData({
+      cards: [
+        {
+          id: "card_1",
+          deckId: "deck_1",
+          recto: "Short prompt",
+          verso: "Short answer",
+          details: ""
+        },
+        {
+          id: "card_2",
+          deckId: "deck_1",
+          recto: "Long prompt",
+          verso: "Long answer",
+          details: "",
+          forceTypedAnswer: true
+        }
+      ]
+    } as never);
+
+    expect(migrated.cards[0].forceTypedAnswer).toBe(false);
+    expect(migrated.cards[1].forceTypedAnswer).toBe(true);
+  });
 });

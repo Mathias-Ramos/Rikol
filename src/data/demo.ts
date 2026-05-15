@@ -49,6 +49,7 @@ export function createDemoData() {
       details: "Language: TypeScript",
       tags: ["arrays"],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "demo" },
       createdAt,
       updatedAt: createdAt
@@ -61,6 +62,7 @@ export function createDemoData() {
       details: "Language: JavaScript",
       tags: ["javascript"],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "demo" },
       createdAt,
       updatedAt: createdAt
@@ -73,6 +75,7 @@ export function createDemoData() {
       details: "",
       tags: ["capital"],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "demo" },
       createdAt,
       updatedAt: createdAt
@@ -85,6 +88,7 @@ export function createDemoData() {
       details: "",
       tags: ["capital"],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "demo" },
       createdAt,
       updatedAt: createdAt
@@ -97,6 +101,7 @@ export function createDemoData() {
       details: "",
       tags: ["method"],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "demo" },
       createdAt,
       updatedAt: createdAt
@@ -109,6 +114,7 @@ export function createDemoData() {
       details: "",
       tags: ["method"],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "demo" },
       createdAt,
       updatedAt: createdAt

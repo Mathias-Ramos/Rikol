@@ -28,6 +28,7 @@ import {
 import { ClipboardEvent, ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createDemoData } from "./data/demo";
 import type { AppData, Badge, Card, Deck, Grade, ImportBundle } from "./types";
+import { getEffectiveAnswerMode } from "./lib/answerMode";
 import {
   exportDeckApkg,
   exportDeckCsv,
@@ -532,7 +533,7 @@ function ReviewView({
     }),
     {} as Record<Grade, string>
   );
-  const answerMode = reviewState?.answerMode ?? "reveal";
+  const answerMode = getEffectiveAnswerMode(card, reviewState?.answerMode ?? "reveal");
   const rendered = renderCard(card, data.media);
   const deck = data.decks.find((item) => item.id === card.deckId);
   const mustTypeAnswer = answerMode === "type" && !typedAnswer.trim();
@@ -1499,12 +1500,14 @@ function CardForm({
   const [recto, setRecto] = useState(existingCard?.recto ?? "");
   const [verso, setVerso] = useState(existingCard?.verso ?? "");
   const [details, setDetails] = useState(existingCard?.details ?? "");
+  const [forceTypedAnswer, setForceTypedAnswer] = useState(existingCard?.forceTypedAnswer ?? false);
 
   useEffect(() => {
     setDeckId(existingCard?.deckId ?? initialDeckId ?? data.decks[0]?.id ?? "");
     setRecto(existingCard?.recto ?? "");
     setVerso(existingCard?.verso ?? "");
     setDetails(existingCard?.details ?? "");
+    setForceTypedAnswer(existingCard?.forceTypedAnswer ?? false);
   }, [data.decks, existingCard, initialDeckId]);
 
   function submit(event: FormEvent) {
@@ -1520,6 +1523,7 @@ function CardForm({
       details: cleanDetails,
       tags: existingCard?.tags ?? [],
       suspended: existingCard?.suspended ?? false,
+      forceTypedAnswer,
       source: existingCard?.source ?? { type: "manual" }
     });
 
@@ -1527,6 +1531,7 @@ function CardForm({
       setRecto("");
       setVerso("");
       setDetails("");
+      setForceTypedAnswer(false);
     }
   }
 
@@ -1556,6 +1561,14 @@ function CardForm({
         </button>
       )}
       <RichTextField label="Details" value={details} placeholder="Optional context" onChange={setDetails} />
+      <label className="checkbox-field">
+        <input
+          type="checkbox"
+          checked={forceTypedAnswer}
+          onChange={(event) => setForceTypedAnswer(event.target.checked)}
+        />
+        <span>Require typed answer</span>
+      </label>
       <button className="primary-action wide" type="submit">
         Save card
       </button>

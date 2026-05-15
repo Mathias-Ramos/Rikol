@@ -241,6 +241,7 @@ function simpleCard(card: StoredCard, recto: string, verso: string, details: str
     details,
     tags: card.tags ?? [],
     suspended: card.suspended ?? false,
+    forceTypedAnswer: card.forceTypedAnswer ?? false,
     source: card.source,
     createdAt: card.createdAt ?? timestamp,
     updatedAt: card.updatedAt ?? timestamp

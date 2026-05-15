@@ -163,6 +163,55 @@ test("simple cards alternate reveal and typed answer modes", async ({ page }) =>
   await expectGradeButtonsOnSingleRow(page);
 });
 
+test("long answers skip typed mode unless card requires it", async ({ page }) => {
+  const longAnswer = "This answer is intentionally longer than fifty visible characters for review.";
+
+  await page.goto("/");
+  await page.getByRole("button", { name: /Create first deck/i }).click();
+  await page.getByPlaceholder("New deck name").fill("Length gate");
+  await page.getByRole("button", { name: "Add deck" }).click();
+
+  await page.getByLabel("Recto").fill("Long answer prompt");
+  await page.getByLabel("Verso").fill(longAnswer);
+  await page.getByRole("button", { name: "Save card" }).click();
+
+  await openNavIfMobile(page);
+  await page.getByRole("button", { name: /Home/i }).click();
+  await page.getByRole("button", { name: /Reveal/i }).click();
+  await page.getByRole("button", { name: "good" }).click();
+
+  await page.waitForTimeout(400);
+  await makeReviewedCardDueNow(page, "Long answer prompt");
+  await page.reload();
+  await expect(page.locator(".review-face")).toContainText("Long answer prompt");
+  await expect(page.getByLabel("Typed answer")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Reveal/i })).toBeEnabled();
+});
+
+test("forced typed answer requires input even for long answers", async ({ page }) => {
+  const longAnswer = "This answer is intentionally longer than fifty visible characters for review.";
+
+  await page.goto("/");
+  await page.getByRole("button", { name: /Create first deck/i }).click();
+  await page.getByPlaceholder("New deck name").fill("Forced type");
+  await page.getByRole("button", { name: "Add deck" }).click();
+
+  await page.getByLabel("Recto").fill("Forced long prompt");
+  await page.getByLabel("Verso").fill(longAnswer);
+  await page.getByLabel("Require typed answer").check();
+  await page.getByRole("button", { name: "Save card" }).click();
+
+  await openNavIfMobile(page);
+  await page.getByRole("button", { name: /Home/i }).click();
+  await expect(page.locator(".review-face")).toContainText("Forced long prompt");
+  await expect(page.getByLabel("Typed answer")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Reveal/i })).toBeDisabled();
+  await page.getByLabel("Typed answer").fill("Long answer");
+  await page.getByRole("button", { name: /Reveal/i }).click();
+  await expect(page.locator(".review-face")).toContainText(longAnswer);
+  await expect(page.locator(".review-face")).toContainText("Your answer");
+});
+
 test("rich text card formatting persists through create and edit", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Create first deck/i }).click();

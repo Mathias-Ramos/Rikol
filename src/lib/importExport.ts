@@ -133,6 +133,7 @@ export async function importCsv(file: File, existingDecks: Deck[], existingCards
       details,
       tags: tagsIndex >= 0 ? splitTags(row[tagsIndex] ?? "") : [],
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "csv", externalId: `${recto}|${verso}`, fileName: file.name },
       createdAt,
       updatedAt: createdAt
@@ -217,6 +218,7 @@ export async function importApkg(file: File, existingCards: Card[]): Promise<Imp
       details,
       tags,
       suspended: false,
+      forceTypedAnswer: false,
       source: { type: "anki", externalId: `${guid}:${cardOrd}`, fileName: file.name },
       createdAt,
       updatedAt: createdAt
