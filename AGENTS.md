@@ -39,7 +39,7 @@ Current "Directory Tree" with short description of each folder and files (5-30 w
 ├── src/data/ - Demo deck and simple recto/verso/detail card seed data.
 ├── src/lib/ - Storage migration, scheduler, answer-mode gating, rewards, rich text, sanitizing, rendering, and import/export logic.
 ├── src/test/ - Vitest setup.
-└── tests/e2e/ - Playwright onboarding, profile, navigation, deck deletion, rich text card form, flip, and review tests.
+└── tests/e2e/ - Playwright onboarding, profile, navigation, deck import, deck deletion, rich text card form, flip, and review tests.
 ```
 
 # Rules
@@ -91,6 +91,7 @@ Here is information about project history, decisions already made, or constraint
 - Review card deck name stays top-center. Due count is hidden from global header.
 - Answer reveal shows answer only. Review card uses CSS 3D flip between Recto and Verso during reveal and grading toggle.
 - Decks menu creates decks from top-right New deck button. Color picker is compact round control shown only in deck creation form.
+- Deck creation drawer includes Import deck button using same JSON, CSV, and APKG import preview flow as Settings.
 - Create card view labels first-deck helper as Create deck, not Deck setup.
 - Decks menu uses focused screens: deck library, deck card list, then card editor. Back arrows return one level.
 - Deck detail header includes small plus icon that opens new-card form with current deck preselected.

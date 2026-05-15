@@ -93,6 +93,25 @@ function getBadgeDescription(badge: Badge) {
   );
 }
 
+async function readImportFile(file: File, data: AppData, restoreBackup: (backup: AppData) => void) {
+  // JSON imports restore whole backups; CSV and APKG files wait for preview confirmation.
+  if (/\.json$/i.test(file.name)) {
+    const backup = await importJsonBackup(file);
+    restoreBackup(backup);
+    return { pending: null, status: "Backup restored." };
+  }
+
+  if (/\.csv$/i.test(file.name)) {
+    return { pending: await importCsv(file, data.decks, data.cards), status: "CSV ready to import." };
+  }
+
+  if (/\.apkg$/i.test(file.name)) {
+    return { pending: await importApkg(file, data.cards), status: "Anki package ready to import." };
+  }
+
+  return { pending: null, status: "Unsupported file type." };
+}
+
 export default function App() {
   const [data, setData] = useState<AppData>(createEmptyAppData());
   const [ready, setReady] = useState(false);
@@ -413,9 +432,11 @@ export default function App() {
         {view === "decks" && (
           <DecksView
             data={data}
+            setData={setData}
             addDeck={addDeck}
             deleteCard={deleteCard}
             deleteDeck={deleteDeck}
+            mergeBundle={mergeBundle}
             saveCard={saveCard}
           />
         )}
@@ -708,15 +729,19 @@ function TypeAnswerFace({
 
 function DecksView({
   data,
+  setData,
   addDeck,
   deleteCard,
   deleteDeck,
+  mergeBundle,
   saveCard
 }: {
   data: AppData;
+  setData: (data: AppData) => void;
   addDeck: (deck: Omit<Deck, "id" | "createdAt" | "updatedAt">) => void;
   deleteCard: (id: string) => void;
   deleteDeck: (id: string) => void;
+  mergeBundle: (bundle: ImportBundle) => void;
   saveCard: (card: Omit<Card, "id" | "createdAt" | "updatedAt">, existingId?: string) => void;
 }) {
   const [deckMode, setDeckMode] = useState<"library" | "deckCards" | "cardEditor" | "newCard">("library");
@@ -1002,6 +1027,12 @@ function DecksView({
                 setCreatingDeck(false);
               }}
             />
+            <DeckImportButton
+              data={data}
+              setData={setData}
+              mergeBundle={mergeBundle}
+              onSaved={() => setCreatingDeck(false)}
+            />
           </div>
         )}
         <div className="deck-list">
@@ -1072,6 +1103,106 @@ function CreateView({
   );
 }
 
+function DeckImportButton({
+  data,
+  setData,
+  mergeBundle,
+  onSaved
+}: {
+  data: AppData;
+  setData: (data: AppData) => void;
+  mergeBundle: (bundle: ImportBundle) => void;
+  onSaved: () => void;
+}) {
+  const [pending, setPending] = useState<ImportBundle | null>(null);
+  const [status, setStatus] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setStatus("Reading file...");
+    try {
+      const result = await readImportFile(file, data, setData);
+      setPending(result.pending);
+      setStatus(result.status);
+      if (!result.pending && result.status === "Backup restored.") {
+        onSaved();
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function savePendingImport() {
+    if (!pending) {
+      return;
+    }
+
+    mergeBundle(pending);
+    setPending(null);
+    setStatus("Import saved.");
+    onSaved();
+  }
+
+  return (
+    <div className="deck-import">
+      <button type="button" className="secondary-action wide" onClick={() => fileInputRef.current?.click()}>
+        <FileUp size={18} />
+        Import deck
+      </button>
+      <input
+        ref={fileInputRef}
+        className="hidden-file-input"
+        type="file"
+        accept=".json,.csv,.apkg"
+        aria-label="Import deck file"
+        onChange={handleFile}
+      />
+      {status && <p className="status-line">{status}</p>}
+      {pending && <ImportPreview pending={pending} onSave={savePendingImport} />}
+    </div>
+  );
+}
+
+function ImportPreview({ pending, onSave }: { pending: ImportBundle; onSave: () => void }) {
+  return (
+    <div className="import-preview">
+      <h3>Preview</h3>
+      <div className="preview-grid">
+        <StatBox label="Decks" value={pending.report.deckCount} />
+        <StatBox label="Cards" value={pending.report.cardCount} />
+        <StatBox label="Media" value={pending.report.mediaCount} />
+        <StatBox label="Duplicates" value={pending.report.duplicateCount} />
+      </div>
+      <ul className="warning-list">
+        {pending.report.warnings.map((warning, index) => (
+          <li key={`${warning.message}_${index}`} className={warning.level}>
+            {warning.message}
+          </li>
+        ))}
+      </ul>
+      <div className="sample-list">
+        {pending.report.sampleCards.map((sample, index) => (
+          <article key={index}>
+            <strong>{sample.recto}</strong>
+            <p>{sample.verso}</p>
+          </article>
+        ))}
+      </div>
+      <button className="primary-action wide" onClick={onSave}>
+        Save import
+        <Check size={18} />
+      </button>
+    </div>
+  );
+}
+
 function SettingsView({
   data,
   setData,
@@ -1107,20 +1238,9 @@ function SettingsView({
 
     setStatus("Reading file...");
     try {
-      if (/\.json$/i.test(file.name)) {
-        const backup = await importJsonBackup(file);
-        setData(backup);
-        setStatus("Backup restored.");
-        setPending(null);
-      } else if (/\.csv$/i.test(file.name)) {
-        setPending(await importCsv(file, data.decks, data.cards));
-        setStatus("CSV ready to import.");
-      } else if (/\.apkg$/i.test(file.name)) {
-        setPending(await importApkg(file, data.cards));
-        setStatus("Anki package ready to import.");
-      } else {
-        setStatus("Unsupported file type.");
-      }
+      const result = await readImportFile(file, data, setData);
+      setPending(result.pending);
+      setStatus(result.status);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Import failed.");
     } finally {
@@ -1191,41 +1311,14 @@ function SettingsView({
         {status && <p className="status-line">{status}</p>}
 
         {pending && (
-          <div className="import-preview">
-            <h3>Preview</h3>
-            <div className="preview-grid">
-              <StatBox label="Decks" value={pending.report.deckCount} />
-              <StatBox label="Cards" value={pending.report.cardCount} />
-              <StatBox label="Media" value={pending.report.mediaCount} />
-              <StatBox label="Duplicates" value={pending.report.duplicateCount} />
-            </div>
-            <ul className="warning-list">
-              {pending.report.warnings.map((warning, index) => (
-                <li key={`${warning.message}_${index}`} className={warning.level}>
-                  {warning.message}
-                </li>
-              ))}
-            </ul>
-            <div className="sample-list">
-              {pending.report.sampleCards.map((sample, index) => (
-                <article key={index}>
-                  <strong>{sample.recto}</strong>
-                  <p>{sample.verso}</p>
-                </article>
-              ))}
-            </div>
-            <button
-              className="primary-action wide"
-              onClick={() => {
-                mergeBundle(pending);
-                setPending(null);
-                setStatus("Import saved.");
-              }}
-            >
-              Save import
-              <Check size={18} />
-            </button>
-          </div>
+          <ImportPreview
+            pending={pending}
+            onSave={() => {
+              mergeBundle(pending);
+              setPending(null);
+              setStatus("Import saved.");
+            }}
+          />
         )}
       </div>
 

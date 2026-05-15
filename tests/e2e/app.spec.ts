@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { Buffer } from "node:buffer";
 
 test("onboarding and mobile navigation", async ({ page }) => {
   await page.goto("/");
@@ -36,6 +37,18 @@ test("onboarding and mobile navigation", async ({ page }) => {
   await page.getByRole("button", { name: "New deck" }).click();
   await expect(page.getByPlaceholder("New deck name")).toBeVisible();
   await expect(page.getByPlaceholder("Description")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import deck" })).toBeVisible();
+  await page.getByLabel("Import deck file").setInputFiles({
+    name: "deck-drawer.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("deck,recto,verso,details,tags\nImported drawer,Hello,Bonjour,,")
+  });
+  await expect(page.getByText("CSV ready to import.")).toBeVisible();
+  await page.getByRole("button", { name: "Save import" }).click();
+  await expect(page.getByRole("button", { name: "Imported drawer 1 cards" })).toBeVisible();
+
+  await page.getByRole("button", { name: "New deck" }).click();
+  await expect(page.getByPlaceholder("New deck name")).toBeVisible();
   await expect(page.locator(".color-picker")).toHaveCSS("width", "28px");
   await page.getByPlaceholder("New deck name").fill("Daily words");
   await page.getByPlaceholder("Description").fill("Quick vocabulary drills");

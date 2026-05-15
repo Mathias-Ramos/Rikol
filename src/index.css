@@ -785,6 +785,7 @@ button:disabled {
 
 .mini-form,
 .card-form,
+.deck-import,
 .import-preview {
   display: grid;
   gap: 10px;
@@ -992,6 +993,10 @@ button:disabled {
   position: absolute;
   inset: 0;
   opacity: 0;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .file-drop {
