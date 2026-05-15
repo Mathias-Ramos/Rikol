@@ -982,6 +982,10 @@ button:disabled {
   background: #f8fbff;
 }
 
+.editor-drawer .deck-import {
+  margin-top: 16px;
+}
+
 .icon-button {
   display: inline-grid;
   place-items: center;

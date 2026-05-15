@@ -92,6 +92,7 @@ Here is information about project history, decisions already made, or constraint
 - Answer reveal shows answer only. Review card uses CSS 3D flip between Recto and Verso during reveal and grading toggle.
 - Decks menu creates decks from top-right New deck button. Color picker is compact round control shown only in deck creation form.
 - Deck creation drawer includes Import deck button using same JSON, CSV, and APKG import preview flow as Settings.
+- Deck creation drawer keeps clear vertical spacing between Add deck and Import deck actions.
 - Create card view labels first-deck helper as Create deck, not Deck setup.
 - Decks menu uses focused screens: deck library, deck card list, then card editor. Back arrows return one level.
 - Deck detail header includes small plus icon that opens new-card form with current deck preselected.
